@@ -1,16 +1,16 @@
 import {
     findAllConfigs,
-    findConfigByKey,
+    findConfigById,
     upsertConfig,
     deleteConfig
-} from "../repositories/config.repository.js";
+} from "../repositorys/config.repository.js";
 
 export function getAllConfigs() {
     return findAllConfigs();
 }
 
-export function getConfig(key) {
-    const config = findConfigByKey(key);
+export function getConfig(id) {
+    const config = findConfigById(id);
     if (!config) {
         throw new Error("Config not found");
     }

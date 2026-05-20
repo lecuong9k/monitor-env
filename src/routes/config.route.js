@@ -20,9 +20,6 @@ export default async function configRoutes(fastify) {
     );
     fastify.post(
         "/configs",
-        {
-            schema: createConfigSchema
-        },
         createConfigController
     );
     fastify.delete(

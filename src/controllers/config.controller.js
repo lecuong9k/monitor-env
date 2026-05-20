@@ -1,18 +1,18 @@
 import {
-    getAllSettings,
-    getSetting,
-    saveSetting,
-    removeSetting
+    getAllConfigs,
+    getConfig,
+    saveConfig,
+    removeConfig
 } from "../services/config.service.js";
 
-export async function getSettingsController() {
-    return getAllSettings();
+export async function getConfigsController() {
+    return getAllConfigs();
 }
 
-export async function getSettingController(request, reply) {
+export async function getConfigController(request, reply) {
     try {
-        const { key } = request.params;
-        return getSetting(key);
+        const { id } = request.params;
+        return getConfig(id);
     } catch (err) {
         return reply.code(404).send({
             error: err.message
@@ -20,17 +20,17 @@ export async function getSettingController(request, reply) {
     }
 }
 
-export async function createSettingController(request) {
+export async function createConfigController(request) {
     const { key, value } = request.body;
-    saveSetting(key, value);
+    saveConfig(key, value);
     return {
         success: true
     };
 }
 
-export async function deleteSettingController(request) {
+export async function deleteConfigController(request) {
     const { key } = request.params;
-    removeSetting(key);
+    removeConfig(key);
     return {
         success: true
     };

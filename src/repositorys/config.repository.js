@@ -7,12 +7,12 @@ export function findAllConfigs() {
     `).all();
 }
 
-export function findConfigByKey(key) {
+export function findConfigById(id) {
     return db.prepare(`
         SELECT *
         FROM configs
-        WHERE key = ?
-    `).get(key);
+        WHERE id = ?
+    `).get(id);
 }
 
 export function upsertConfig(key, value) {
