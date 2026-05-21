@@ -3,7 +3,7 @@ import {
     findConfigById,
     upsertConfig,
     deleteConfig
-} from "../repositorys/config.repository.js";
+} from "../repositories/config.repository.js";
 
 export function getAllConfigs() {
     return findAllConfigs();
@@ -17,10 +17,10 @@ export function getConfig(id) {
     return config;
 }
 
-export function saveConfig(key, value) {
-    return upsertConfig(key, value);
+export function saveConfig(record) {
+    return upsertConfig(record);
 }
 
-export function removeConfig(key) {
-    return deleteConfig(key);
+export function removeConfig(id) {
+    return deleteConfig(id);
 }

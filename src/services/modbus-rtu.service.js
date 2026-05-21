@@ -3,7 +3,7 @@ import {
     findModbusRtuById,
     upsertModbusRtu,
     deleteModbusRtu
-} from "../repositorys/modbus-rtu.repository.js"
+} from "../repositories/modbus-rtu.repository.js";
 
 export function getAllModbusRtu() {
     return findAllModbusRtu();
@@ -16,8 +16,9 @@ export function getModbusRtu(id) {
     }
     return modbusRtu;
 }
-export function saveModbusRtu(id, data) {
-    return upsertModbusRtu(id, data);
+
+export function saveModbusRtu(record) {
+    return upsertModbusRtu(record);
 }
 
 export function removeModbusRtu(id) {

@@ -21,16 +21,16 @@ export async function getConfigController(request, reply) {
 }
 
 export async function createConfigController(request) {
-    const { key, value } = request.body;
-    saveConfig(key, value);
+    const record = saveConfig(request.body);
     return {
-        success: true
+        success: true,
+        data: record
     };
 }
 
 export async function deleteConfigController(request) {
-    const { key } = request.params;
-    removeConfig(key);
+    const { id } = request.params;
+    removeConfig(id);
     return {
         success: true
     };
