@@ -1,34 +1,33 @@
 import db from "../database/sqlite.js";
-export function findAllConfigs() {
+export function findAllModbusRtu() {
     return db.prepare(`
         SELECT *
-        FROM configs
+        FROM modbus_rtu
         ORDER BY id DESC
     `).all();
 }
 
-export function findConfigById(id) {
+export function findModbusRtuById(id) {
     return db.prepare(`
         SELECT *
-        FROM configs
+        FROM modbus_rtu
         WHERE id = ?
     `).get(id);
 }
 
-export function upsertConfig(id, value) {
+export function upsertModbusRtu(id, data) {
     return db.prepare(`
-        INSERT INTO configs(id, value)
+        INSERT INTO modbus_rtu(id, data)
         VALUES (?, ?)
         ON CONFLICT(id)
         DO UPDATE SET
-            value = excluded.value,
+            data = excluded.data,
             updatedAt = CURRENT_TIMESTAMP
-    `).run(id, value);
+    `).run(id, data);
 }
-
-export function deleteConfig(id) {
+export function deleteModbusRtu(id) {
     return db.prepare(`
-        DELETE FROM configs
+        DELETE FROM modbus_rtu
         WHERE id = ?
     `).run(id);
 }

@@ -1,23 +1,22 @@
 import db from "../database/sqlite.js";
-export function findAllConfigs() {
+export function findAllDataLogging() {
     return db.prepare(`
         SELECT *
-        FROM configs
+        FROM data_logging
         ORDER BY id DESC
     `).all();
 }
-
-export function findConfigById(id) {
+export function findDataLoggingById(id) {
     return db.prepare(`
         SELECT *
-        FROM configs
+        FROM data_logging
         WHERE id = ?
     `).get(id);
 }
 
-export function upsertConfig(id, value) {
+export function upsertDataLogging(id, value) {
     return db.prepare(`
-        INSERT INTO configs(id, value)
+        INSERT INTO data_logging(id, value)
         VALUES (?, ?)
         ON CONFLICT(id)
         DO UPDATE SET
@@ -26,9 +25,9 @@ export function upsertConfig(id, value) {
     `).run(id, value);
 }
 
-export function deleteConfig(id) {
+export function deleteDataLogging(id) {
     return db.prepare(`
-        DELETE FROM configs
+        DELETE FROM data_logging
         WHERE id = ?
     `).run(id);
 }

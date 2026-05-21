@@ -1,11 +1,15 @@
 import Fastify from "fastify";
-import settingRoutes from "./routes/setting.route.js";
+import configsRoutes from "./routes/config.route.js";
+import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
+import dataLoggingRoutes from "./routes/data-logging.routes.js";
 const fastify = Fastify({
     logger: true
 });
 
 // register routes
-fastify.register(settingRoutes);
+fastify.register(configsRoutes);
+fastify.register(modbusRtuRoutes);
+fastify.register(dataLoggingRoutes);
 
 fastify.get("/", async () => {
     return {

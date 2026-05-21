@@ -5,9 +5,6 @@ import {
     deleteConfigController
 } from "../controllers/config.controller.js";
 
-import {
-    createConfigSchema
-} from "../schemas/config.schema.js";
 
 export default async function configRoutes(fastify) {
     fastify.get(
