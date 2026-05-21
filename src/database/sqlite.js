@@ -42,19 +42,20 @@ function initializeDatabase() {
             hardware_port TEXT,
             data_name TEXT,
             data_type TEXT,
-            function_code INTEGER,
+            function_code TEXT,
             register_address INTEGER,
             data_format INTEGER DEFAULT 0,
             byte_order INTEGER,
             unit TEXT,
             status INTEGER DEFAULT 1,
-            config TEXT DEFAULT '{}',
+            config_id INTEGER,
             updated_at TIMESTAMP,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
         CREATE TABLE IF NOT EXISTS data_logging (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT,
             data_name TEXT,
             raw_data TEXT,
             recipe TEXT,

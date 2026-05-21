@@ -31,3 +31,11 @@ export function deleteModbusRtu(id) {
         WHERE id = ?
     `).run(id);
 }
+
+export function findDevicesByHardwarePort(hardwarePort) {
+    return db.prepare(`
+        SELECT *
+        FROM modbus_rtu
+        WHERE hardware_port = ?
+    `).all(hardwarePort);
+}

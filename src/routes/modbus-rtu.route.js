@@ -2,7 +2,8 @@ import {
     getAllModbusRtuController,
     getModbusRtuController,
     createModbusRtuController,
-    deleteModbusRtuController
+    deleteModbusRtuController,
+    getDevicesByHardwarePortController
 } from "../controllers/modbus-rtu.controller.js";
 
 export default async function modbusRtuRoutes(fastify) {
@@ -21,5 +22,9 @@ export default async function modbusRtuRoutes(fastify) {
     fastify.delete(
         "/modbus-rtu/:id",
         deleteModbusRtuController
+    );
+    fastify.get(
+        "/modbus-rtu/hardware-port/:hardwarePort",
+        getDevicesByHardwarePortController
     );
 }

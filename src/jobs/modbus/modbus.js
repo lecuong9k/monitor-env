@@ -1,88 +1,18 @@
 import ModbusRTU from "modbus-serial";
-import db from "../database/sqlite.js";
-
+import db from "../../database/sqlite.js";
+import { checkPhysicalPorts } from "../serialPort.js";
 // Job: watch config row and reinitialize Modbus client when config changes
-
 const POLL_CONFIG_INTERVAL = 2000; // ms
 const DEFAULT_POLLING_MS = 1000;
 const TIMEOUT = 10 * 1000;
+let CONFIG_WATCHER = null;
 
 let client = null;
 let readIntervals = [];
 let currentConfigHash = null;
 let currentConfigId = null;
 
-function normalizeParity(p) {
-    if (p === null || p === undefined) return "none";
-    if (typeof p === "string") return p;
-    // numeric mapping if integer stored
-    switch (Number(p)) {
-        case 1:
-            return "even";
-        case 2:
-            return "odd";
-        default:
-            return "none";
-    }
-}
-
-function clearReads() {
-    readIntervals.forEach(i => clearInterval(i));
-    readIntervals = [];
-}
-
-function closeClient() {
-    return new Promise(resolve => {
-        try {
-            if (!client) return resolve();
-            try {
-                client.close(() => {
-                    client = null;
-                    resolve();
-                });
-            } catch (e) {
-                // some versions may not support callback close
-                try {
-                    client.close();
-                } catch (er) { }
-                client = null;
-                resolve();
-            }
-        } catch (err) {
-            client = null;
-            resolve();
-        }
-    });
-}
-
-function computeHash(cfg) {
-    if (!cfg) return null;
-    // consider relevant fields only
-    const relevant = {
-        id: cfg.id,
-        hardware_port: cfg.hardware_port,
-        baud_rate: cfg.baud_rate,
-        data_bits: cfg.data_bits,
-        parity_bits: cfg.parity_bits,
-        stop_bits: cfg.stop_bits,
-        communication_type: cfg.communication_type,
-        ip: cfg.ip,
-        port: cfg.port
-    };
-    return JSON.stringify(relevant);
-}
-
-async function loadLatestConfig() {
-    return db.prepare(`SELECT * FROM configs ORDER BY id DESC LIMIT 1`).get();
-}
-
-async function loadDevices() {
-    return db.prepare(`SELECT * FROM modbus_rtu WHERE status = 1`).all();
-}
-
 async function startWithConfig(cfg) {
-    await closeClient();
-    clearReads();
 
     if (!cfg) {
         console.warn("No config found — waiting for configuration to be added.");
@@ -153,17 +83,29 @@ async function startWithConfig(cfg) {
     }
 }
 
+async function initConfig() {
+    const devicesInOS = await checkPhysicalPorts();
+    if (devicesInOS.length == 0) {
+        console.log("No physical devices found.");
+        return;
+    }
+    const hardwarePorts = devicesInOS.map(d => d.path);
+    CONFIG_WATCHER = await db.prepare(`
+        SELECT  mbrt.id as modbus_rtu_id, mbrt.hardware_port, c.* 
+        FROM modbus_rtu mbrt JOIN configs c
+        ON mbrt.config_id = c.id
+        WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
+        `).all();
+    const existingPorts = CONFIG_WATCHER.map(c => c.hardware_port);
+    const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
+    console.log('Existing ports in configs:', existingPorts);
+    console.log('Missing ports in configs:', missingPorts);
+}
+
 // Poll config for changes
 async function watcher() {
     try {
-        const cfg = await loadLatestConfig();
-        const hash = computeHash(cfg);
-        if (hash !== currentConfigHash) {
-            console.log("Config change detected — reinitializing Modbus client.");
-            currentConfigHash = hash;
-            currentConfigId = cfg ? cfg.id : null;
-            await startWithConfig(cfg);
-        }
+
     } catch (err) {
         console.error("Error while watching config:", err.message || err);
     }
@@ -171,6 +113,8 @@ async function watcher() {
 
 // start initial watcher
 (async () => {
+    await initConfig();
+
     await watcher();
     setInterval(watcher, POLL_CONFIG_INTERVAL);
 })();

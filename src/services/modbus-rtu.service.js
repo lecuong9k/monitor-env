@@ -2,7 +2,8 @@ import {
     findAllModbusRtu,
     findModbusRtuById,
     upsertModbusRtu,
-    deleteModbusRtu
+    deleteModbusRtu,
+    findDevicesByHardwarePort
 } from "../repositorys/modbus-rtu.repository.js"
 
 export function getAllModbusRtu() {
@@ -22,4 +23,8 @@ export function saveModbusRtu(id, data) {
 
 export function removeModbusRtu(id) {
     return deleteModbusRtu(id);
+}
+
+export function getDevicesByHardwarePort(hardwarePort) {
+    return findDevicesByHardwarePort(hardwarePort);
 }

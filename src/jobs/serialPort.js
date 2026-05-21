@@ -22,4 +22,4 @@ export async function checkPhysicalPorts() {
     }
 }
 // Chạy thử hàm
-checkPhysicalPorts();
+// checkPhysicalPorts();
