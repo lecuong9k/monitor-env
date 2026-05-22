@@ -41,6 +41,7 @@ const TABLE_DEFINITIONS = {
     CREATE TABLE IF NOT EXISTS configs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         hardware_port TEXT,
+        quantity INTEGER,
         communication_type INTEGER,
         ip TEXT,
         port INTEGER,

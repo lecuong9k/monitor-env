@@ -1,28 +1,35 @@
 import ModbusRTU from "modbus-serial";
+import { checkPhysicalPorts } from "../serialPort.js";
+import db from "../../database/sqlite.js";
 
 const workers = new Map();
 const TIMEOUT = 3000;
-
-// startModbusWorkers([{
-//     id: 1,
-//     device_id: 1,
-//     function_code: 3,
-//     register_address: 0,
-//     data_name: "Test Device",
-//     config: {
-//         quantity: 3,
-//         type: "rtu",
-//         hardware_port: "COM5",
-//         baud_rate: 9600,
-//         data_bits: 8,
-//         parity_bits: "none",
-//         stop_bits: 1
-//     }
-// }])
+let CONFIG_WATCHER = null;
 export async function startModbusWorkers(devices = []) {
-    for (const device of devices) {
-        await startDeviceWorker(device);
+    initConfig();
+    // for (const device of devices) {
+    //     await startDeviceWorker(device);
+    // }
+}
+
+async function initConfig() {
+    const devicesInOS = await checkPhysicalPorts();
+    if (devicesInOS.length == 0) {
+        console.log("No physical devices found.");
+        return;
     }
+    const hardwarePorts = devicesInOS.map(d => d.path);
+    console.log(hardwarePorts);
+    CONFIG_WATCHER = await db.prepare(`
+        SELECT  mbrt.id as modbus_rtu_id, mbrt.hardware_port, c.* 
+        FROM modbus_rtu mbrt JOIN configs c
+        ON mbrt.config_id = c.id
+        WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
+        `).all(hardwarePorts);
+    const existingPorts = CONFIG_WATCHER.map(c => c.hardware_port);
+    const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
+    console.log('Existing ports in configs:', existingPorts);
+    console.log('Missing ports in configs:', missingPorts);
 }
 
 export async function startDeviceWorker(device) {
@@ -221,3 +228,21 @@ function parseConfig(config) {
         return {};
     }
 }
+startModbusWorkers([
+    {
+        id: 1,
+        device_id: 1,
+        function_code: 3,
+        register_address: 0,
+        data_name: "Test Device",
+        config: {
+            quantity: 3,
+            type: "rtu",
+            hardware_port: "COM5",
+            baud_rate: 9600,
+            data_bits: 8,
+            parity_bits: "none",
+            stop_bits: 1
+        }
+    }
+])

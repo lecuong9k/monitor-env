@@ -6,6 +6,8 @@ import fastifyStatic from "@fastify/static";
 import configsRoutes from "./routes/config.route.js";
 import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
 import dataLoggingRoutes from "./routes/data-logging.routes.js";
+import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
+
 import { registerSecurity } from "./plugins/security.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -84,3 +86,4 @@ const start = async () => {
 };
 
 start();
+// startModbusWorkers();
