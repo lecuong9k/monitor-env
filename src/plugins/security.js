@@ -5,7 +5,9 @@ import sensible from "@fastify/sensible";
 
 const DEFAULT_CORS_ORIGINS = [
     "http://localhost:5173",
-    "http://127.0.0.1:5173"
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
 ];
 
 function parseCorsOrigins() {
@@ -49,6 +51,8 @@ export async function registerSecurity(fastify) {
         }
     });
 
+    const serverPort = String(Number(process.env.PORT) || 3000);
+
     await fastify.register(cors, {
         origin: (origin, callback) => {
             if (!origin) {
@@ -58,6 +62,21 @@ export async function registerSecurity(fastify) {
             if (isOriginAllowed(origin, corsOrigins)) {
                 callback(null, true);
                 return;
+            }
+            // BE serve FE cùng cổng (localhost:3000) — cho phép origin trùng host
+            try {
+                const { hostname, port } = new URL(origin);
+                const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+                const effectivePort = port || (hostname === "::1" ? "" : "80");
+                if (
+                    localHosts.has(hostname) &&
+                    (effectivePort === serverPort || effectivePort === "")
+                ) {
+                    callback(null, true);
+                    return;
+                }
+            } catch {
+                /* ignore invalid origin URL */
             }
             callback(new Error("Not allowed by CORS"), false);
         },

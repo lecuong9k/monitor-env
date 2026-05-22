@@ -4,3 +4,4 @@ data/
 logs/
 .env
 .env.local
+dist/
