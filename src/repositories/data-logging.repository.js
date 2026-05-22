@@ -85,7 +85,7 @@ export function upsertDataLogging(data) {
   // values tương ứng
   const values = keys.map((key) => payload[key]);
   // UPDATE
-  if (payload.id) {
+  if (id) {
     const setClause = keys.map((key) => `${key} = ?`).join(", ");
 
     const query = `
@@ -93,8 +93,10 @@ export function upsertDataLogging(data) {
             SET ${setClause}
             WHERE id = ?
         `;
-    return db.prepare(query).run(...values, payload.id);
+
+    return db.prepare(query).run(...values, id);
   }
+
   return insertDataLogging(record);
 }
 
