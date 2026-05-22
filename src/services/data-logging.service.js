@@ -3,7 +3,7 @@ import {
     findDataLoggingById,
     upsertDataLogging,
     deleteDataLogging
-} from "../repositorys/data-logging.repository.js";
+} from "../repositories/data-logging.repository.js";
 
 export function getAllDataLogging() {
     return findAllDataLogging();
@@ -17,8 +17,8 @@ export function getDataLogging(id) {
     return dataLogging;
 }
 
-export function saveDataLogging(id, value) {
-    return upsertDataLogging(id, value);
+export function saveDataLogging(record) {
+    return upsertDataLogging(record);
 }
 
 export function removeDataLogging(id) {

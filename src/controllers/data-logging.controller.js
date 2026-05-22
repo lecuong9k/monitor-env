@@ -21,10 +21,10 @@ export async function getDataLoggingController(request, reply) {
 }
 
 export async function createDataLoggingController(request) {
-    const { id, value } = request.body;
-    saveDataLogging(id, value);
+    const record = saveDataLogging(request.body);
     return {
-        success: true
+        success: true,
+        data: record
     };
 }
 
