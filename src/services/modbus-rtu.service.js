@@ -4,7 +4,7 @@ import {
   upsertModbusRtu,
   deleteModbusRtu,
   findDevicesByHardwarePort,
-} from "../repositorys/modbus-rtu.repository.js";
+} from "../repositories/modbus-rtu.repository.js";
 
 export function getAllModbusRtu() {
   return findAllModbusRtu();

@@ -72,6 +72,7 @@ if (isNewDatabase) {
 }
 
 ensureTables();
+ensureColumns();
 
 function tableExists(tableName) {
   const row = db
@@ -101,6 +102,35 @@ function ensureTables() {
     console.log(`Created missing tables: ${created.join(", ")}`);
   } else if (isNewDatabase) {
     console.log("Database initialized");
+  }
+}
+
+function columnExists(tableName, columnName) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return columns.some((col) => col.name === columnName);
+}
+
+/** Bổ sung cột mới cho DB đã tạo trước khi đổi schema (ALTER TABLE). */
+function ensureColumns() {
+  const added = [];
+
+  if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "config_id")) {
+    db.exec(`ALTER TABLE modbus_rtu ADD COLUMN config_id INTEGER`);
+    added.push("modbus_rtu.config_id");
+  }
+
+  if (tableExists("configs") && !columnExists("configs", "quantity")) {
+    db.exec(`ALTER TABLE configs ADD COLUMN quantity INTEGER`);
+    added.push("configs.quantity");
+  }
+
+  if (tableExists("data_logging") && !columnExists("data_logging", "device_id")) {
+    db.exec(`ALTER TABLE data_logging ADD COLUMN device_id TEXT`);
+    added.push("data_logging.device_id");
+  }
+
+  if (added.length > 0) {
+    console.log(`Added missing columns: ${added.join(", ")}`);
   }
 }
 
