@@ -39,8 +39,7 @@ async function initConfig() {
             mbrt.device_id,
             mbrt.function_code,
             mbrt.register_address,
-            mbrt.id as modbus_rtu_id, 
-            mbrt.hardware_port, 
+            mbrt.hardware_port,
             mbrt.data_name,
             c.* 
         FROM modbus_rtu mbrt JOIN configs c
