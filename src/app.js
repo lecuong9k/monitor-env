@@ -2,6 +2,8 @@ import Fastify from "fastify";
 import configsRoutes from "./routes/config.route.js";
 import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
 import dataLoggingRoutes from "./routes/data-logging.routes.js";
+import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
+
 const fastify = Fastify({
     logger: true
 });
@@ -31,3 +33,4 @@ const start = async () => {
 };
 
 start();
+// startModbusWorkers();

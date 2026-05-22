@@ -68,6 +68,7 @@ function initializeDatabase() {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             hardware_port TEXT,
             communication_type INTEGER,
+            quantity INTEGER,
             ip TEXT,
             port INTEGER,
             baud_rate INTEGER,

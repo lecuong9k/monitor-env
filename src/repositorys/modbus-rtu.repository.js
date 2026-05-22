@@ -16,14 +16,41 @@ export function findModbusRtuById(id) {
 }
 
 export function upsertModbusRtu(id, data) {
-    return db.prepare(`
-        INSERT INTO modbus_rtu(id, data)
-        VALUES (?, ?)
-        ON CONFLICT(id)
-        DO UPDATE SET
-            data = excluded.data,
-            updatedAt = CURRENT_TIMESTAMP
-    `).run(id, data);
+    console.log('Upserting modbus rtu:', id, data);
+    // lọc key hợp lệ
+    const keys = Object.keys(data)
+
+    // values tương ứng
+    const values = keys.map(key => data[key]);
+
+    // UPDATE
+    if (data.id) {
+
+        const setClause = keys
+            .map(key => `${key} = ?`)
+            .join(", ");
+
+        const query = `
+            UPDATE modbus_rtu
+            SET ${setClause}
+            WHERE id = ?
+        `;
+
+        return db
+            .prepare(query)
+            .run(...values, data.id);
+    }
+
+    // INSERT
+    const columns = keys.join(", ");
+    const placeholders = keys.map(() => "?").join(", ");
+    const query = `
+        INSERT INTO modbus_rtu (${columns})
+        VALUES (${placeholders})
+    `;
+    return db
+        .prepare(query)
+        .run(...values);
 }
 export function deleteModbusRtu(id) {
     return db.prepare(`

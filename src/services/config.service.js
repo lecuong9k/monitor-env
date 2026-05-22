@@ -4,6 +4,8 @@ import {
     upsertConfig,
     deleteConfig
 } from "../repositorys/config.repository.js";
+import { startModbusWorkers } from "../jobs/modbus/modbus.service.js";
+import { getAllModbusRtu } from "./modbus-rtu.service.js";
 
 export function getAllConfigs() {
     return findAllConfigs();
@@ -17,10 +19,16 @@ export function getConfig(id) {
     return config;
 }
 
-export function saveConfig(key, value) {
-    return upsertConfig(key, value);
+export async function saveConfig(id, value) {
+    const res = upsertConfig(id, value);
+    try {
+        await startModbusWorkers();
+    } catch (err) {
+        console.error("Failed to restart modbus workers:", err && err.message ? err.message : err);
+    }
+    return res;
 }
 
-export function removeConfig(key) {
-    return deleteConfig(key);
+export function removeConfig(id) {
+    return deleteConfig(id);
 }

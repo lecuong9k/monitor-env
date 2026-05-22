@@ -15,14 +15,41 @@ export function findDataLoggingById(id) {
 }
 
 export function upsertDataLogging(id, value) {
-    return db.prepare(`
-        INSERT INTO data_logging(id, value)
-        VALUES (?, ?)
-        ON CONFLICT(id)
-        DO UPDATE SET
-            value = excluded.value,
-            updatedAt = CURRENT_TIMESTAMP
-    `).run(id, value);
+    console.log('Upserting data logging:', id, value);
+    // lọc key hợp lệ
+    const keys = Object.keys(value)
+
+    // values tương ứng
+    const values = keys.map(key => value[key]);
+
+    // UPDATE
+    if (value.id) {
+
+        const setClause = keys
+            .map(key => `${key} = ?`)
+            .join(", ");
+
+        const query = `
+            UPDATE data_logging
+            SET ${setClause}
+            WHERE id = ?
+        `;
+
+        return db
+            .prepare(query)
+            .run(...values, value.id);
+    }
+
+    // INSERT
+    const columns = keys.join(", ");
+    const placeholders = keys.map(() => "?").join(", ");
+    const query = `
+        INSERT INTO data_logging (${columns})
+        VALUES (${placeholders})
+    `;
+    return db
+        .prepare(query)
+        .run(...values);
 }
 
 export function deleteDataLogging(id) {

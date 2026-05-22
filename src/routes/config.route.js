@@ -12,7 +12,7 @@ export default async function configRoutes(fastify) {
         getConfigsController
     );
     fastify.get(
-        "/configs/:key",
+        "/configs/:id",
         getConfigController
     );
     fastify.post(
@@ -20,7 +20,7 @@ export default async function configRoutes(fastify) {
         createConfigController
     );
     fastify.delete(
-        "/configs/:key",
+        "/configs/:id",
         deleteConfigController
     );
 }

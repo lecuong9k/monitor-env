@@ -16,14 +16,41 @@ export function findConfigById(id) {
 }
 
 export function upsertConfig(id, value) {
-    return db.prepare(`
-        INSERT INTO configs(id, value)
-        VALUES (?, ?)
-        ON CONFLICT(id)
-        DO UPDATE SET
-            value = excluded.value,
-            updatedAt = CURRENT_TIMESTAMP
-    `).run(id, value);
+    console.log('Upserting config:', id, value);
+    // lọc key hợp lệ
+    const keys = Object.keys(value)
+
+    // values tương ứng
+    const values = keys.map(key => value[key]);
+
+    // UPDATE
+    if (value.id) {
+
+        const setClause = keys
+            .map(key => `${key} = ?`)
+            .join(", ");
+
+        const query = `
+            UPDATE configs
+            SET ${setClause}
+            WHERE id = ?
+        `;
+
+        return db
+            .prepare(query)
+            .run(...values, value.id);
+    }
+
+    // INSERT
+    const columns = keys.join(", ");
+    const placeholders = keys.map(() => "?").join(", ");
+    const query = `
+        INSERT INTO configs (${columns})
+        VALUES (${placeholders})
+    `;
+    return db
+        .prepare(query)
+        .run(...values);
 }
 
 export function deleteConfig(id) {
