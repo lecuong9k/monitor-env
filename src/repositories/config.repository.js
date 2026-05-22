@@ -67,30 +67,29 @@ export function updateConfig(id, record) {
   return findConfigById(id);
 }
 
-export function upsertConfig(id, value) {
-  console.log("Upserting config:", id, value);
-  // lọc key hợp lệ
-  const keys = Object.keys(value);
-
-  // values tương ứng
-  const values = keys.map((key) => value[key]);
-
+export function upsertConfig(data) {
+  console.log("Upserting config:", data);
+  const { id, ...payload } = data;
+  const keys = Object.keys(payload);
+  const values = keys.map((key) => payload[key]);
   // UPDATE
-  if (value.id) {
-    const setClause = keys.map((key) => `${key} = ?`).join(", ");
+  if (id) {
+    console.log("--- Update config ---");
+    const setClause = keys
+      .map((key) => `${key} = ?`)
+      .join(", ");
 
     const query = `
             UPDATE configs
             SET ${setClause}
             WHERE id = ?
         `;
-
-    return db.prepare(query).run(...values, value.id);
+    return db.prepare(query).run(...values, id);
   }
-
   // INSERT
   const columns = keys.join(", ");
   const placeholders = keys.map(() => "?").join(", ");
+
   const query = `
         INSERT INTO configs (${columns})
         VALUES (${placeholders})

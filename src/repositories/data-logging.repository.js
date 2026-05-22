@@ -58,16 +58,15 @@ export function updateDataLogging(id, record) {
   return findDataLoggingById(id);
 }
 
-export function upsertDataLogging(id, value) {
-  console.log("Upserting data logging:", id, value);
+export function upsertDataLogging(data) {
+  const { id, ...payload } = data;
+  console.log("Upserting data logging:", id, payload);
   // lọc key hợp lệ
-  const keys = Object.keys(value);
-
+  const keys = Object.keys(payload);
   // values tương ứng
-  const values = keys.map((key) => value[key]);
-
+  const values = keys.map((key) => payload[key]);
   // UPDATE
-  if (value.id) {
+  if (payload.id) {
     const setClause = keys.map((key) => `${key} = ?`).join(", ");
 
     const query = `
@@ -75,8 +74,7 @@ export function upsertDataLogging(id, value) {
             SET ${setClause}
             WHERE id = ?
         `;
-
-    return db.prepare(query).run(...values, value.id);
+    return db.prepare(query).run(...values, payload.id);
   }
 
   // INSERT
