@@ -67,35 +67,14 @@ export function updateConfig(id, record) {
   return findConfigById(id);
 }
 
-export function upsertConfig(id, value) {
-  console.log("Upserting config:", id, value);
-  // lọc key hợp lệ
-  const keys = Object.keys(value);
-
-  // values tương ứng
-  const values = keys.map((key) => value[key]);
-
-  // UPDATE
-  if (value.id) {
-    const setClause = keys.map((key) => `${key} = ?`).join(", ");
-
-    const query = `
-            UPDATE configs
-            SET ${setClause}
-            WHERE id = ?
-        `;
-
-    return db.prepare(query).run(...values, value.id);
+export function upsertConfig(record) {
+  if (!record || typeof record !== "object") {
+    throw new Error("Config record is required");
   }
-
-  // INSERT
-  const columns = keys.join(", ");
-  const placeholders = keys.map(() => "?").join(", ");
-  const query = `
-        INSERT INTO configs (${columns})
-        VALUES (${placeholders})
-    `;
-  return db.prepare(query).run(...values);
+  if (record.id) {
+    return updateConfig(record.id, record);
+  }
+  return insertConfig(record);
 }
 
 export function deleteConfig(id) {

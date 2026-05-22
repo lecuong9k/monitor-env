@@ -18,6 +18,7 @@
     "start": "node --import ./src/load-env.js src/app.js",
     "dev": "node --import ./src/load-env.js --watch src/app.js",
     "job:modbus": "node --import ./src/load-env.js src/jobs/modbus.js",
+    "seed": "node --import ./src/load-env.js src/database/seed.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {

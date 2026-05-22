@@ -1,6 +1,26 @@
 import db from "../database/sqlite.js";
 
-const COLUMNS = ["data_name", "raw_data", "recipe", "convert_data"];
+const COLUMNS = [
+  "modbus_rtu_id",
+  "device_id",
+  "data_name",
+  "raw_data",
+  "recipe",
+  "convert_data",
+];
+
+export function findDataLoggingByModbusRtuId(modbusRtuId) {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM data_logging
+        WHERE modbus_rtu_id = ?
+        ORDER BY id ASC
+    `,
+    )
+    .all(modbusRtuId);
+}
 
 export function findAllDataLogging() {
   return db
@@ -58,35 +78,14 @@ export function updateDataLogging(id, record) {
   return findDataLoggingById(id);
 }
 
-export function upsertDataLogging(id, value) {
-  console.log("Upserting data logging:", id, value);
-  // lọc key hợp lệ
-  const keys = Object.keys(value);
-
-  // values tương ứng
-  const values = keys.map((key) => value[key]);
-
-  // UPDATE
-  if (value.id) {
-    const setClause = keys.map((key) => `${key} = ?`).join(", ");
-
-    const query = `
-            UPDATE data_logging
-            SET ${setClause}
-            WHERE id = ?
-        `;
-
-    return db.prepare(query).run(...values, value.id);
+export function upsertDataLogging(record) {
+  if (!record || typeof record !== "object") {
+    throw new Error("Data logging record is required");
   }
-
-  // INSERT
-  const columns = keys.join(", ");
-  const placeholders = keys.map(() => "?").join(", ");
-  const query = `
-        INSERT INTO data_logging (${columns})
-        VALUES (${placeholders})
-    `;
-  return db.prepare(query).run(...values);
+  if (record.id) {
+    return updateDataLogging(record.id, record);
+  }
+  return insertDataLogging(record);
 }
 
 export function deleteDataLogging(id) {

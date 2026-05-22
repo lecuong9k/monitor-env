@@ -19,8 +19,8 @@ export function getConfig(id) {
   return config;
 }
 
-export async function saveConfig(id, value) {
-  const res = upsertConfig(id, value);
+export async function saveConfig(record) {
+  const res = upsertConfig(record);
   try {
     await startModbusWorkers();
   } catch (err) {
