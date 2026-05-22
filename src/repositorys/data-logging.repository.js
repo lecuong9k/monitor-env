@@ -1,4 +1,15 @@
 import db from "../database/sqlite.js";
+
+const insertDataLoggingStmt = db.prepare(`
+    INSERT INTO data_logging (
+        device_id,
+        data_name,
+        raw_data,
+        recipe,
+        convert_data
+    ) VALUES (?, ?, ?, ?, ?)
+`);
+
 export function findAllDataLogging() {
     return db.prepare(`
         SELECT *
@@ -15,7 +26,6 @@ export function findDataLoggingById(id) {
 }
 
 export function upsertDataLogging(id, value) {
-    console.log('Upserting data logging:', id, value);
     // lọc key hợp lệ
     const keys = Object.keys(value)
 
@@ -23,8 +33,7 @@ export function upsertDataLogging(id, value) {
     const values = keys.map(key => value[key]);
 
     // UPDATE
-    if (value.id) {
-
+    if (id) {
         const setClause = keys
             .map(key => `${key} = ?`)
             .join(", ");
@@ -37,19 +46,20 @@ export function upsertDataLogging(id, value) {
 
         return db
             .prepare(query)
-            .run(...values, value.id);
+            .run(...values, id);
     }
 
-    // INSERT
-    const columns = keys.join(", ");
-    const placeholders = keys.map(() => "?").join(", ");
-    const query = `
-        INSERT INTO data_logging (${columns})
-        VALUES (${placeholders})
-    `;
-    return db
-        .prepare(query)
-        .run(...values);
+    return insertDataLogging(value);
+}
+
+export function insertDataLogging(value) {
+    return insertDataLoggingStmt.run(
+        value.device_id || null,
+        value.data_name || null,
+        value.raw_data || null,
+        value.recipe || null,
+        value.convert_data || null
+    );
 }
 
 export function deleteDataLogging(id) {

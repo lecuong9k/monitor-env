@@ -15,17 +15,16 @@ export function findModbusRtuById(id) {
     `).get(id);
 }
 
-export function upsertModbusRtu(id, data) {
-    console.log('Upserting modbus rtu:', id, data);
+export function upsertModbusRtu(id, value) {
+    console.log('--- Upserting modbus rtu:', id, value);
     // lọc key hợp lệ
-    const keys = Object.keys(data)
+    const keys = Object.keys(value)
 
     // values tương ứng
-    const values = keys.map(key => data[key]);
+    const values = keys.map(key => value[key]);
 
     // UPDATE
-    if (data.id) {
-
+    if (id) {
         const setClause = keys
             .map(key => `${key} = ?`)
             .join(", ");
@@ -38,7 +37,7 @@ export function upsertModbusRtu(id, data) {
 
         return db
             .prepare(query)
-            .run(...values, data.id);
+            .run(...values, id);
     }
 
     // INSERT

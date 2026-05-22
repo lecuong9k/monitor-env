@@ -17,8 +17,8 @@ export function getModbusRtu(id) {
     }
     return modbusRtu;
 }
-export function saveModbusRtu(id, data) {
-    return upsertModbusRtu(id, data);
+export function saveModbusRtu(id, value) {
+    return upsertModbusRtu(id, value);
 }
 
 export function removeModbusRtu(id) {

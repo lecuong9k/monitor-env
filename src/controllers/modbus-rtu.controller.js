@@ -22,8 +22,8 @@ export async function getModbusRtuController(request, reply) {
 }
 
 export async function createModbusRtuController(request) {
-    const { id, data } = request.body;
-    saveModbusRtu(id, data);
+    const { id, value } = request.body;
+    saveModbusRtu(id, value);
     return {
         success: true
     };

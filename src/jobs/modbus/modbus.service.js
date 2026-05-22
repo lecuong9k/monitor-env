@@ -1,15 +1,19 @@
 import ModbusRTU from "modbus-serial";
 import { checkPhysicalPorts } from "../serialPort.js";
 import db from "../../database/sqlite.js";
+import { saveDataLogging } from "../../services/data-logging.service.js";
 
 const workers = new Map();
 const TIMEOUT = 3000;
-let CONFIG_WATCHER = null;
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export async function startModbusWorkers(devices = []) {
-    initConfig();
-    // for (const device of devices) {
-    //     await startDeviceWorker(device);
-    // }
+    const DEVICES = await initConfig();
+    for (const device of DEVICES) {
+        await startDeviceWorker(device);
+    }
 }
 
 async function initConfig() {
@@ -20,16 +24,24 @@ async function initConfig() {
     }
     const hardwarePorts = devicesInOS.map(d => d.path);
     console.log(hardwarePorts);
-    CONFIG_WATCHER = await db.prepare(`
-        SELECT  mbrt.id as modbus_rtu_id, mbrt.hardware_port, c.* 
+    const DEVICES = await db.prepare(`
+        SELECT  mbrt.id as modbus_id,
+            mbrt.device_id,
+            mbrt.function_code,
+            mbrt.register_address,
+            mbrt.id as modbus_rtu_id, 
+            mbrt.hardware_port, 
+            mbrt.data_name,
+            c.* 
         FROM modbus_rtu mbrt JOIN configs c
         ON mbrt.config_id = c.id
         WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
         `).all(hardwarePorts);
-    const existingPorts = CONFIG_WATCHER.map(c => c.hardware_port);
+    const existingPorts = DEVICES.map(d => d.hardware_port);
     const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
-    console.log('Existing ports in configs:', existingPorts);
+    console.log('Existing ports in configs:', existingPorts, DEVICES);
     console.log('Missing ports in configs:', missingPorts);
+    return DEVICES;
 }
 
 export async function startDeviceWorker(device) {
@@ -79,24 +91,23 @@ async function connectClient(worker) {
         device
     } = worker;
 
-    const cfg = parseConfig(device.config);
     console.log(
         `Connecting device ${device.data_name}`
     );
 
     // RTU
-    if (cfg.hardware_port) {
+    if (device.hardware_port) {
         await client.connectRTUBuffered(
-            cfg.hardware_port,
+            device.hardware_port,
             {
-                baudRate: cfg.baud_rate || 9600,
-                dataBits: cfg.data_bits || 8,
-                parity: normalizeParity(cfg.parity_bits),
-                stopBits: cfg.stop_bits || 1
+                baudRate: device.baud_rate || 9600,
+                dataBits: device.data_bits || 8,
+                parity: normalizeParity(device.parity_bits),
+                stopBits: device.stop_bits || 1
             }
         );
         console.log(
-            `RTU connected ${cfg.hardware_port}`
+            `RTU connected ${device.hardware_port}`
         );
     } else {
         // TCP
@@ -152,7 +163,7 @@ async function pollDevice(client, device) {
     const register =
         Number(device.register_address) || 0;
     const quantity =
-        Number(cfg.quantity) || 1;
+        Number(device.quantity) || 1;
     const func =
         Number(device.function_code) || 3;
     client.setID(unitId);
@@ -183,16 +194,21 @@ async function pollDevice(client, device) {
         data: response.data
     });
 
-    // TODO:
-    // save database
-    // mqtt publish
-    // websocket emit
-}
-
-function sleep(ms) {
-    return new Promise(resolve => {
-        setTimeout(resolve, ms);
-    });
+    try {
+        await saveDataLogging(null, {
+            device_id: device.device_id,
+            data_name: device.data_name,
+            raw_data: JSON.stringify(response.data),
+            recipe: device.recipe ? JSON.stringify(device.recipe) : null,
+            convert_data: JSON.stringify({
+                temperature: response.data[0],
+                humidity: response.data[1],
+                version: response.data[2]
+            })
+        });
+    } catch (err) {
+        console.error("Failed to save data log:", err && err.message ? err.message : err);
+    }
 }
 
 function normalizeParity(parity) {
@@ -228,21 +244,4 @@ function parseConfig(config) {
         return {};
     }
 }
-startModbusWorkers([
-    {
-        id: 1,
-        device_id: 1,
-        function_code: 3,
-        register_address: 0,
-        data_name: "Test Device",
-        config: {
-            quantity: 3,
-            type: "rtu",
-            hardware_port: "COM5",
-            baud_rate: 9600,
-            data_bits: 8,
-            parity_bits: "none",
-            stop_bits: 1
-        }
-    }
-])
+startModbusWorkers()

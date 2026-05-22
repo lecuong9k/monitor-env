@@ -24,7 +24,7 @@ export function upsertConfig(id, value) {
     const values = keys.map(key => value[key]);
 
     // UPDATE
-    if (value.id) {
+    if (id) {
 
         const setClause = keys
             .map(key => `${key} = ?`)
@@ -38,7 +38,7 @@ export function upsertConfig(id, value) {
 
         return db
             .prepare(query)
-            .run(...values, value.id);
+            .run(...values, id);
     }
 
     // INSERT

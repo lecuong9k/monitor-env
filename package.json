@@ -13,9 +13,14 @@
   "license": "ISC",
   "author": "lecuong",
   "type": "module",
-  "main": "index.js",
+  "main": "src/app.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node src/app.js",
+    "dev": "nodemon --watch src --ext js,json --exec node src/app.js",
+    "test": "echo \"Error: no test specified\" \u0026\u0026 exit 1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   },
   "dependencies": {
     "better-sqlite3": "^12.10.0",
