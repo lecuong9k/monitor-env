@@ -135,19 +135,21 @@ function ensureColumns() {
     added.push("data_logging.device_id");
   }
 
-  if (
-    tableExists("data_logging") &&
-    columnExists("data_logging", "modbus_rtu_id")
-  ) {
+  if (tableExists("data_logging") && tableExists("modbus_rtu")) {
     db.exec(`
       UPDATE data_logging
       SET device_id = (
         SELECT m.device_id FROM modbus_rtu m
-        WHERE m.id = data_logging.modbus_rtu_id
+        WHERE m.device_id IS NOT NULL
+          AND m.device_id != ''
+          AND (
+            m.data_name = data_logging.data_name
+            OR m.device_id = data_logging.device_id
+          )
+        ORDER BY m.id
         LIMIT 1
       )
-      WHERE (device_id IS NULL OR device_id = '')
-        AND modbus_rtu_id IS NOT NULL
+      WHERE device_id IS NULL OR device_id = ''
     `);
   }
 
