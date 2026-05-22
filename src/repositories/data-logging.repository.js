@@ -1,25 +1,18 @@
 import db from "../database/sqlite.js";
 
-const COLUMNS = [
-  "modbus_rtu_id",
-  "device_id",
-  "data_name",
-  "raw_data",
-  "recipe",
-  "convert_data",
-];
+const COLUMNS = ["device_id", "data_name", "raw_data", "recipe", "convert_data"];
 
-export function findDataLoggingByModbusRtuId(modbusRtuId) {
+export function findDataLoggingByDeviceId(deviceId) {
   return db
     .prepare(
       `
         SELECT *
         FROM data_logging
-        WHERE modbus_rtu_id = ?
+        WHERE device_id = ?
         ORDER BY id ASC
     `,
     )
-    .all(modbusRtuId);
+    .all(deviceId);
 }
 
 export function findAllDataLogging() {
@@ -80,21 +73,21 @@ export function updateDataLogging(id, record) {
 
 export function upsertDataLogging(data) {
   const { id, ...payload } = data;
-  // lọc key hợp lệ
   const keys = Object.keys(payload);
-  // values tương ứng
   const values = keys.map((key) => payload[key]);
-  // UPDATE
+
   if (id) {
     const setClause = keys.map((key) => `${key} = ?`).join(", ");
 
-    const query = `
+    db.prepare(
+      `
             UPDATE data_logging
             SET ${setClause}
             WHERE id = ?
-        `;
+        `,
+    ).run(...values, id);
 
-    return db.prepare(query).run(...values, id);
+    return findDataLoggingById(id);
   }
 
   return insertDataLogging(payload);
