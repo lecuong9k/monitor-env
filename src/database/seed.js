@@ -161,7 +161,6 @@ function seed() {
 
       for (const logging of sample.loggings) {
         insertDataLogging({
-          modbus_rtu_id: modbus.id,
           device_id: sample.device_id,
           ...logging,
         });

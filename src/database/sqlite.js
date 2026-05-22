@@ -28,7 +28,6 @@ const TABLE_DEFINITIONS = {
   data_logging: `
     CREATE TABLE IF NOT EXISTS data_logging (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        modbus_rtu_id INTEGER,
         device_id TEXT,
         data_name TEXT,
         raw_data TEXT,
@@ -138,18 +137,17 @@ function ensureColumns() {
 
   if (
     tableExists("data_logging") &&
-    !columnExists("data_logging", "modbus_rtu_id")
+    columnExists("data_logging", "modbus_rtu_id")
   ) {
-    db.exec(`ALTER TABLE data_logging ADD COLUMN modbus_rtu_id INTEGER`);
-    added.push("data_logging.modbus_rtu_id");
     db.exec(`
       UPDATE data_logging
-      SET modbus_rtu_id = (
-        SELECT m.id FROM modbus_rtu m
-        WHERE m.device_id = data_logging.device_id
+      SET device_id = (
+        SELECT m.device_id FROM modbus_rtu m
+        WHERE m.id = data_logging.modbus_rtu_id
         LIMIT 1
       )
-      WHERE modbus_rtu_id IS NULL AND device_id IS NOT NULL
+      WHERE (device_id IS NULL OR device_id = '')
+        AND modbus_rtu_id IS NOT NULL
     `);
   }
 
