@@ -77,9 +77,7 @@ export function upsertModbusRtu(data) {
 
   // UPDATE
   if (id) {
-    const setClause = keys
-      .map((key) => `${key} = ?`)
-      .join(", ");
+    const setClause = keys.map((key) => `${key} = ?`).join(", ");
 
     const query = `
             UPDATE modbus_rtu

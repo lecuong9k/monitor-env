@@ -7,7 +7,7 @@ const DB_PATH = path.join(DB_DIR, "database.db");
 
 /** Định nghĩa bảng — thêm bảng mới vào đây, startup sẽ tự tạo nếu thiếu. */
 const TABLE_DEFINITIONS = {
-    modbus_rtu: `
+  modbus_rtu: `
     CREATE TABLE IF NOT EXISTS modbus_rtu (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         device_id TEXT,
@@ -25,9 +25,10 @@ const TABLE_DEFINITIONS = {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
-    data_logging: `
+  data_logging: `
     CREATE TABLE IF NOT EXISTS data_logging (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        modbus_rtu_id INTEGER,
         device_id TEXT,
         data_name TEXT,
         raw_data TEXT,
@@ -37,7 +38,7 @@ const TABLE_DEFINITIONS = {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
-    configs: `
+  configs: `
     CREATE TABLE IF NOT EXISTS configs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         hardware_port TEXT,
@@ -59,8 +60,8 @@ const TABLE_DEFINITIONS = {
 const INDEX_DEFINITIONS = [];
 
 if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-    console.log("Created data folder");
+  fs.mkdirSync(DB_DIR, { recursive: true });
+  console.log("Created data folder");
 }
 
 const isNewDatabase = !fs.existsSync(DB_PATH);
@@ -71,17 +72,17 @@ db.pragma("busy_timeout = 5000");
 // INIT DATABASE
 // ======================
 if (isNewDatabase) {
-    console.log("Initializing database...");
+  console.log("Initializing database...");
 }
 
 ensureTables();
 ensureColumns();
 
 function tableExists(tableName) {
-    const row = db
-        .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
-        .get(tableName);
-    return Boolean(row);
+  const row = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)
+    .get(tableName);
+  return Boolean(row);
 }
 
 /**
@@ -89,52 +90,72 @@ function tableExists(tableName) {
  * bảng nào thiếu thì CREATE, sau đó đảm bảo index.
  */
 function ensureTables() {
-    const created = [];
+  const created = [];
 
-    for (const [tableName, createSql] of Object.entries(TABLE_DEFINITIONS)) {
-        if (tableExists(tableName)) continue;
-        db.exec(createSql);
-        created.push(tableName);
-    }
+  for (const [tableName, createSql] of Object.entries(TABLE_DEFINITIONS)) {
+    if (tableExists(tableName)) continue;
+    db.exec(createSql);
+    created.push(tableName);
+  }
 
-    for (const indexSql of INDEX_DEFINITIONS) {
-        db.exec(indexSql);
-    }
+  for (const indexSql of INDEX_DEFINITIONS) {
+    db.exec(indexSql);
+  }
 
-    if (created.length > 0) {
-        console.log(`Created missing tables: ${created.join(", ")}`);
-    } else if (isNewDatabase) {
-        console.log("Database initialized");
-    }
+  if (created.length > 0) {
+    console.log(`Created missing tables: ${created.join(", ")}`);
+  } else if (isNewDatabase) {
+    console.log("Database initialized");
+  }
 }
 
 function columnExists(tableName, columnName) {
-    const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
-    return columns.some((col) => col.name === columnName);
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  return columns.some((col) => col.name === columnName);
 }
 
 /** Bổ sung cột mới cho DB đã tạo trước khi đổi schema (ALTER TABLE). */
 function ensureColumns() {
-    const added = [];
+  const added = [];
 
-    if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "config_id")) {
-        db.exec(`ALTER TABLE modbus_rtu ADD COLUMN config_id INTEGER`);
-        added.push("modbus_rtu.config_id");
-    }
+  if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "config_id")) {
+    db.exec(`ALTER TABLE modbus_rtu ADD COLUMN config_id INTEGER`);
+    added.push("modbus_rtu.config_id");
+  }
 
-    if (tableExists("configs") && !columnExists("configs", "quantity")) {
-        db.exec(`ALTER TABLE configs ADD COLUMN quantity INTEGER`);
-        added.push("configs.quantity");
-    }
+  if (tableExists("configs") && !columnExists("configs", "quantity")) {
+    db.exec(`ALTER TABLE configs ADD COLUMN quantity INTEGER`);
+    added.push("configs.quantity");
+  }
 
-    if (tableExists("data_logging") && !columnExists("data_logging", "device_id")) {
-        db.exec(`ALTER TABLE data_logging ADD COLUMN device_id TEXT`);
-        added.push("data_logging.device_id");
-    }
+  if (
+    tableExists("data_logging") &&
+    !columnExists("data_logging", "device_id")
+  ) {
+    db.exec(`ALTER TABLE data_logging ADD COLUMN device_id TEXT`);
+    added.push("data_logging.device_id");
+  }
 
-    if (added.length > 0) {
-        console.log(`Added missing columns: ${added.join(", ")}`);
-    }
+  if (
+    tableExists("data_logging") &&
+    !columnExists("data_logging", "modbus_rtu_id")
+  ) {
+    db.exec(`ALTER TABLE data_logging ADD COLUMN modbus_rtu_id INTEGER`);
+    added.push("data_logging.modbus_rtu_id");
+    db.exec(`
+      UPDATE data_logging
+      SET modbus_rtu_id = (
+        SELECT m.id FROM modbus_rtu m
+        WHERE m.device_id = data_logging.device_id
+        LIMIT 1
+      )
+      WHERE modbus_rtu_id IS NULL AND device_id IS NOT NULL
+    `);
+  }
+
+  if (added.length > 0) {
+    console.log(`Added missing columns: ${added.join(", ")}`);
+  }
 }
 
 export default db;

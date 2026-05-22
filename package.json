@@ -15,12 +15,11 @@
   "type": "module",
   "main": "src/app.js",
   "scripts": {
-    "start": "node src/app.js",
-    "dev": "nodemon --watch src --ext js,json --exec node src/app.js",
-    "test": "echo \"Error: no test specified\" \u0026\u0026 exit 1"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "start": "node --import ./src/load-env.js src/app.js",
+    "dev": "node --import ./src/load-env.js --watch src/app.js",
+    "job:modbus": "node --import ./src/load-env.js src/jobs/modbus.js",
+    "seed": "node --import ./src/load-env.js src/database/seed.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
     "@fastify/cors": "^11.2.0",

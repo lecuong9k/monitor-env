@@ -75,9 +75,7 @@ export function upsertConfig(data) {
   // UPDATE
   if (id) {
     console.log("--- Update config ---");
-    const setClause = keys
-      .map((key) => `${key} = ?`)
-      .join(", ");
+    const setClause = keys.map((key) => `${key} = ?`).join(", ");
 
     const query = `
             UPDATE configs
