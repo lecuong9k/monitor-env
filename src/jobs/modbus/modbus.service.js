@@ -12,6 +12,7 @@ function sleep(ms) {
 export async function startModbusWorkers(devices = []) {
     await stopAllModbusWorkers();
     const DEVICES = await initConfig();
+    console.log("Starting modbus workers for devices:", DEVICES);
     for (const device of DEVICES) {
         await startDeviceWorker(device);
     }

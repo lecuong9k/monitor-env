@@ -97,7 +97,7 @@ export function upsertDataLogging(data) {
     return db.prepare(query).run(...values, id);
   }
 
-  return insertDataLogging(record);
+  return insertDataLogging(payload);
 }
 
 export function deleteDataLogging(id) {
