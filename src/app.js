@@ -11,12 +11,18 @@ import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
 import { registerSecurity } from "./plugins/security.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const beRoot = path.join(__dirname, "..");
 const BODY_LIMIT = Number(process.env.BODY_LIMIT_BYTES) || 1024 * 64;
 const REQUEST_TIMEOUT = Number(process.env.REQUEST_TIMEOUT_MS) || 30_000;
 
-const fePath = process.env.STATIC_DIR
-  ? path.resolve(process.env.STATIC_DIR)
-  : path.join(__dirname, "..", "dist");
+/** Luôn resolve STATIC_DIR theo thư mục BE, không phụ thuộc cwd khi chạy npm. */
+function resolveStaticDir() {
+  const raw = process.env.STATIC_DIR?.trim();
+  if (!raw) return path.join(beRoot, "dist");
+  return path.isAbsolute(raw) ? raw : path.join(beRoot, raw);
+}
+
+const fePath = resolveStaticDir();
 
 const hasFeDist =
   fs.existsSync(fePath) &&
@@ -46,10 +52,38 @@ if (hasFeDist) {
   await fastify.register(fastifyStatic, {
     root: fePath,
     prefix: "/",
+    decorateReply: true,
+    setHeaders(res, filePath) {
+      if (filePath.endsWith(".css")) {
+        res.setHeader("Content-Type", "text/css; charset=utf-8");
+      } else if (filePath.endsWith(".js")) {
+        res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+      } else if (filePath.endsWith(".svg")) {
+        res.setHeader("Content-Type", "image/svg+xml");
+      }
+    },
   });
 
   fastify.get("/", async (_request, reply) => {
-    return reply.sendFile("index.html");
+    return reply.sendFile("index.html", { root: fePath });
+  });
+
+  /** SPA fallback; không trả JSON cho /assets/* (tránh lỗi MIME stylesheet). */
+  fastify.setNotFoundHandler((request, reply) => {
+    const url = request.url.split("?")[0] ?? "";
+
+    if (
+      url.startsWith("/assets/") ||
+      /\.(css|js|mjs|svg|ico|png|jpg|jpeg|webp|woff2?)$/i.test(url)
+    ) {
+      return reply.code(404).type("text/plain").send("Not found");
+    }
+
+    if (request.method === "GET") {
+      return reply.sendFile("index.html", { root: fePath });
+    }
+
+    return reply.code(404).send({ error: "Not found" });
   });
 
   fastify.log.info(`Serving FE from ${fePath}`);
