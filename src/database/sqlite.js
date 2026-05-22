@@ -8,47 +8,48 @@ const DB_PATH = path.join(DB_DIR, "database.db");
 /** Định nghĩa bảng — thêm bảng mới vào đây, startup sẽ tự tạo nếu thiếu. */
 const TABLE_DEFINITIONS = {
   modbus_rtu: `
-    CREATE TABLE modbus_rtu (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id INTEGER,
-      hardware_port TEXT,
-      data_name TEXT,
-      data_type TEXT,
-      function_code INTEGER,
-      register_address INTEGER,
-      data_format INTEGER DEFAULT 0,
-      byte_order INTEGER,
-      unit TEXT,
-      status INTEGER DEFAULT 1,
-      config_id INTEGER,
-      updated_at TIMESTAMP,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS modbus_rtu (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT,
+        hardware_port TEXT,
+        data_name TEXT,
+        data_type TEXT,
+        function_code TEXT,
+        register_address INTEGER,
+        data_format INTEGER DEFAULT 0,
+        byte_order INTEGER,
+        unit TEXT,
+        status INTEGER DEFAULT 1,
+        config_id INTEGER,
+        updated_at TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
   data_logging: `
-    CREATE TABLE data_logging (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      device_id INTEGER,
-      raw_data TEXT,
-      recipe TEXT,
-      convert_data TEXT,
-      updated_at TIMESTAMP,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS data_logging (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT,
+        data_name TEXT,
+        raw_data TEXT,
+        recipe TEXT,
+        convert_data TEXT,
+        updated_at TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
   configs: `
-    CREATE TABLE configs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      hardware_port TEXT,
-      communication_type INTEGER,
-      ip TEXT,
-      port INTEGER,
-      baud_rate INTEGER,
-      data_bits INTEGER,
-      parity_bits INTEGER,
-      stop_bits INTEGER,
-      updated_at TIMESTAMP,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    CREATE TABLE IF NOT EXISTS configs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        hardware_port TEXT,
+        communication_type INTEGER,
+        ip TEXT,
+        port INTEGER,
+        baud_rate INTEGER,
+        data_bits INTEGER,
+        parity_bits INTEGER,
+        stop_bits INTEGER,
+        updated_at TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
 };
