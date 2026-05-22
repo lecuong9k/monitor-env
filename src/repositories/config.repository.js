@@ -67,14 +67,32 @@ export function updateConfig(id, record) {
   return findConfigById(id);
 }
 
-export function upsertConfig(record) {
-  if (!record || typeof record !== "object") {
-    throw new Error("Config record is required");
+export function upsertConfig(data) {
+  console.log("Upserting config:", data);
+  const { id, ...payload } = data;
+  const keys = Object.keys(payload);
+  const values = keys.map((key) => payload[key]);
+  // UPDATE
+  if (id) {
+    console.log("--- Update config ---");
+    const setClause = keys.map((key) => `${key} = ?`).join(", ");
+
+    const query = `
+            UPDATE configs
+            SET ${setClause}
+            WHERE id = ?
+        `;
+    return db.prepare(query).run(...values, id);
   }
-  if (record.id) {
-    return updateConfig(record.id, record);
-  }
-  return insertConfig(record);
+  // INSERT
+  const columns = keys.join(", ");
+  const placeholders = keys.map(() => "?").join(", ");
+
+  const query = `
+        INSERT INTO configs (${columns})
+        VALUES (${placeholders})
+    `;
+  return db.prepare(query).run(...values);
 }
 
 export function deleteConfig(id) {

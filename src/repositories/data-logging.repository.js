@@ -78,12 +78,22 @@ export function updateDataLogging(id, record) {
   return findDataLoggingById(id);
 }
 
-export function upsertDataLogging(record) {
-  if (!record || typeof record !== "object") {
-    throw new Error("Data logging record is required");
-  }
-  if (record.id) {
-    return updateDataLogging(record.id, record);
+export function upsertDataLogging(data) {
+  const { id, ...payload } = data;
+  // lọc key hợp lệ
+  const keys = Object.keys(payload);
+  // values tương ứng
+  const values = keys.map((key) => payload[key]);
+  // UPDATE
+  if (payload.id) {
+    const setClause = keys.map((key) => `${key} = ?`).join(", ");
+
+    const query = `
+            UPDATE data_logging
+            SET ${setClause}
+            WHERE id = ?
+        `;
+    return db.prepare(query).run(...values, payload.id);
   }
   return insertDataLogging(record);
 }

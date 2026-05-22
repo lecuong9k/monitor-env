@@ -13,7 +13,7 @@
   "license": "ISC",
   "author": "lecuong",
   "type": "module",
-  "main": "index.js",
+  "main": "src/app.js",
   "scripts": {
     "start": "node --import ./src/load-env.js src/app.js",
     "dev": "node --import ./src/load-env.js --watch src/app.js",

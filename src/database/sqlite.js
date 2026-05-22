@@ -67,7 +67,10 @@ if (!fs.existsSync(DB_DIR)) {
 const isNewDatabase = !fs.existsSync(DB_PATH);
 const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
-
+db.pragma("busy_timeout = 5000");
+// ======================
+// INIT DATABASE
+// ======================
 if (isNewDatabase) {
   console.log("Initializing database...");
 }
@@ -125,7 +128,10 @@ function ensureColumns() {
     added.push("configs.quantity");
   }
 
-  if (tableExists("data_logging") && !columnExists("data_logging", "device_id")) {
+  if (
+    tableExists("data_logging") &&
+    !columnExists("data_logging", "device_id")
+  ) {
     db.exec(`ALTER TABLE data_logging ADD COLUMN device_id TEXT`);
     added.push("data_logging.device_id");
   }

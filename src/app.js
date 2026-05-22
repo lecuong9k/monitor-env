@@ -86,4 +86,4 @@ const start = async () => {
 };
 
 start();
-// startModbusWorkers();
+startModbusWorkers();
