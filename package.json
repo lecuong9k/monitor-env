@@ -29,5 +29,7 @@
     "better-sqlite3": "^12.10.0",
     "dotenv": "^17.4.2",
     "fastify": "^5.8.5"
+    "modbus-serial": "^8.0.25",
+    "serialport": "^13.0.0"
   }
 }
