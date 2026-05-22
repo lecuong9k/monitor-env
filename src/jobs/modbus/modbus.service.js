@@ -10,9 +10,19 @@ function sleep(ms) {
 }
 
 export async function startModbusWorkers(devices = []) {
+    await stopAllModbusWorkers();
     const DEVICES = await initConfig();
     for (const device of DEVICES) {
         await startDeviceWorker(device);
+    }
+}
+
+export async function stopAllModbusWorkers() {
+    const keys = [...workers.keys()];
+    console.log("Stopping all modbus workers...", keys);
+    for (const key of keys) {
+        const deviceId = key.replace(/^device-/, "");
+        await stopDeviceWorker(deviceId);
     }
 }
 
@@ -20,12 +30,12 @@ async function initConfig() {
     const devicesInOS = await checkPhysicalPorts();
     if (devicesInOS.length == 0) {
         console.log("No physical devices found.");
-        return;
+        return [];
     }
     const hardwarePorts = devicesInOS.map(d => d.path);
     console.log(hardwarePorts);
     const DEVICES = await db.prepare(`
-        SELECT  mbrt.id as modbus_id,
+        SELECT  mbrt.id as id,
             mbrt.device_id,
             mbrt.function_code,
             mbrt.register_address,
@@ -39,8 +49,8 @@ async function initConfig() {
         `).all(hardwarePorts);
     const existingPorts = DEVICES.map(d => d.hardware_port);
     const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
-    console.log('Existing ports in configs:', existingPorts, DEVICES);
-    console.log('Missing ports in configs:', missingPorts);
+    // console.log('Existing ports in configs:', existingPorts, DEVICES);
+    // console.log('Missing ports in configs:', missingPorts);
     return DEVICES;
 }
 
@@ -79,8 +89,10 @@ export async function stopDeviceWorker(deviceId) {
 
     worker.running = false;
     try {
-        worker.client.close();
-    } catch (err) { }
+        await worker.client.close().catch(() => { });
+    } catch (err) {
+        // ignore close failures when port is already closed
+    }
     workers.delete(workerKey);
     console.log(`Worker stopped ${workerKey}`);
 }
@@ -157,7 +169,6 @@ async function pollingLoop(worker) {
 }
 
 async function pollDevice(client, device) {
-    const cfg = parseConfig(device.config);
     const unitId =
         Number(device.device_id) || 1;
     const register =
@@ -195,7 +206,7 @@ async function pollDevice(client, device) {
     });
 
     try {
-        await saveDataLogging(null, {
+        await saveDataLogging({
             device_id: device.device_id,
             data_name: device.data_name,
             raw_data: JSON.stringify(response.data),
@@ -244,4 +255,4 @@ function parseConfig(config) {
         return {};
     }
 }
-startModbusWorkers()
+// startModbusWorkers()

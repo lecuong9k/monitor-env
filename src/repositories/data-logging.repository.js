@@ -60,7 +60,6 @@ export function updateDataLogging(id, record) {
 
 export function upsertDataLogging(data) {
   const { id, ...payload } = data;
-  console.log("Upserting data logging:", id, payload);
   // lọc key hợp lệ
   const keys = Object.keys(payload);
   // values tương ứng
