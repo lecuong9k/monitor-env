@@ -36,17 +36,17 @@ async function initConfig() {
     const hardwarePorts = devicesInOS.map(d => d.path);
     console.log(hardwarePorts);
     const DEVICES = await db.prepare(`
-        SELECT  mbrt.id as id,
-            mbrt.device_id,
-            mbrt.function_code,
-            mbrt.register_address,
-            mbrt.hardware_port,
-            mbrt.data_name,
-            c.* 
-        FROM modbus_rtu mbrt JOIN configs c
-        ON mbrt.config_id = c.id
-        WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
-        `).all(hardwarePorts);
+            SELECT  mbrt.id as id,
+                mbrt.device_id,
+                mbrt.function_code,
+                mbrt.register_address,
+                mbrt.hardware_port,
+                mbrt.data_name,
+                c.* 
+            FROM modbus_rtu mbrt JOIN configs c
+            ON mbrt.config_id = c.id
+            WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
+            `).all(hardwarePorts);
     const existingPorts = DEVICES.map(d => d.hardware_port);
     const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
     // console.log('Existing ports in configs:', existingPorts, DEVICES);
@@ -206,7 +206,7 @@ async function pollDevice(client, device) {
     });
 
     try {
-        await saveDataLogging({
+        const dataLog = {
             device_id: device.device_id,
             data_name: device.data_name,
             raw_data: JSON.stringify(response.data),
@@ -216,7 +216,9 @@ async function pollDevice(client, device) {
                 humidity: response.data[1],
                 version: response.data[2]
             })
-        });
+        }
+        await sendToServer(response.data);
+        await saveDataLogging(dataLog);
     } catch (err) {
         console.error("Failed to save data log:", err && err.message ? err.message : err);
     }
@@ -256,3 +258,24 @@ function parseConfig(config) {
     }
 }
 // startModbusWorkers()
+async function sendToServer(data) {
+    try {
+        const formData = {
+            device_id: "MINI PC",
+            machineCode: "Sensor-mini-pc",
+            temperature: data[0],
+            humidity: data[1],
+            version: data[2],
+            timestamp: new Date().toISOString()
+        }
+        const response = await fetch('http://123.25.30.4:20003', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+    } catch (err) {
+        console.error('Error sending data to server:', err);
+    }
+}
