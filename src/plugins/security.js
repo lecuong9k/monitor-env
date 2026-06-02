@@ -54,33 +54,8 @@ export async function registerSecurity(fastify) {
     const serverPort = String(Number(process.env.PORT) || 3000);
 
     await fastify.register(cors, {
-        origin: (origin, callback) => {
-            if (!origin) {
-                callback(null, true);
-                return;
-            }
-            if (isOriginAllowed(origin, corsOrigins)) {
-                callback(null, true);
-                return;
-            }
-            // BE serve FE cùng cổng (localhost:3000) — cho phép origin trùng host
-            try {
-                const { hostname, port } = new URL(origin);
-                const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
-                const effectivePort = port || (hostname === "::1" ? "" : "80");
-                if (
-                    localHosts.has(hostname) &&
-                    (effectivePort === serverPort || effectivePort === "")
-                ) {
-                    callback(null, true);
-                    return;
-                }
-            } catch {
-                /* ignore invalid origin URL */
-            }
-            callback(new Error("Not allowed by CORS"), false);
-        },
-        methods: ["GET", "POST", "DELETE", "OPTIONS"],
+        origin: true,
+        methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
         credentials: true,
         maxAge: 86_400

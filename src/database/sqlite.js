@@ -16,7 +16,7 @@ const TABLE_DEFINITIONS = {
         data_type TEXT,
         function_code TEXT,
         register_address INTEGER,
-        data_format INTEGER DEFAULT 0,
+        data_format DOUBLE DEFAULT 0,
         byte_order INTEGER,
         unit TEXT,
         status INTEGER DEFAULT 1,

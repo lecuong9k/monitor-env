@@ -12,8 +12,11 @@ function sleep(ms) {
 export async function startModbusWorkers(devices = []) {
     await stopAllModbusWorkers();
     const DEVICES = await initConfig();
-    for (const device of DEVICES) {
-        await startDeviceWorker(device);
+    const grouped = groupDevicesByEndpoint(DEVICES);
+    console.log("Starting modbus workers for endpoints:", Array.from(grouped.keys()));
+
+    for (const [endpoint, devices] of grouped.entries()) {
+        await startEndpointWorker(endpoint, devices);
     }
 }
 
@@ -21,9 +24,32 @@ export async function stopAllModbusWorkers() {
     const keys = [...workers.keys()];
     console.log("Stopping all modbus workers...", keys);
     for (const key of keys) {
-        const deviceId = key.replace(/^device-/, "");
-        await stopDeviceWorker(deviceId);
+        await stopWorker(key);
     }
+}
+
+function groupDevicesByEndpoint(devices) {
+    return devices.reduce((map, device) => {
+        const endpoint = getWorkerKey(device);
+        if (!endpoint) {
+            return map;
+        }
+        if (!map.has(endpoint)) {
+            map.set(endpoint, []);
+        }
+        map.get(endpoint).push(device);
+        return map;
+    }, new Map());
+}
+
+function getWorkerKey(device) {
+    if (device.hardware_port) {
+        return `rtu-${device.hardware_port}`;
+    }
+    if (device.ip) {
+        return `tcp-${device.ip}:${device.port || 502}`;
+    }
+    return null;
 }
 
 async function initConfig() {
@@ -35,52 +61,47 @@ async function initConfig() {
     const hardwarePorts = devicesInOS.map(d => d.path);
     console.log(hardwarePorts);
     const DEVICES = await db.prepare(`
-        SELECT  mbrt.id as id,
-            mbrt.device_id,
-            mbrt.function_code,
-            mbrt.register_address,
-            mbrt.hardware_port,
-            mbrt.data_name,
-            c.* 
-        FROM modbus_rtu mbrt JOIN configs c
-        ON mbrt.config_id = c.id
-        WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
-        `).all(hardwarePorts);
+            SELECT  mbrt.id as id,
+                mbrt.device_id,
+                mbrt.function_code,
+                mbrt.register_address,
+                mbrt.hardware_port,
+                mbrt.data_name,
+                c.* 
+            FROM modbus_rtu mbrt LEFT JOIN configs c
+            ON mbrt.config_id = c.id
+            WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
+            `).all(hardwarePorts);
     const existingPorts = DEVICES.map(d => d.hardware_port);
     const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
-    // console.log('Existing ports in configs:', existingPorts, DEVICES);
-    // console.log('Missing ports in configs:', missingPorts);
     return DEVICES;
 }
 
-export async function startDeviceWorker(device) {
-    console.log(`Starting worker for device ${device}...`);
-    const workerKey = `device-${device.id}`;
-    // tránh duplicate
-    if (workers.has(workerKey)) {
-        await stopDeviceWorker(device.id);
+async function startEndpointWorker(endpoint, devices) {
+    console.log(`Starting worker for endpoint ${endpoint} with ${devices.length} device(s)`);
+    if (workers.has(endpoint)) {
+        await stopWorker(endpoint);
     }
+
     const worker = {
         running: true,
-        device,
-        client: new ModbusRTU()
+        devices,
+        client: new ModbusRTU(),
+        endpoint
     };
-    workers.set(workerKey, worker);
+    workers.set(endpoint, worker);
+
     try {
         await connectClient(worker);
         pollingLoop(worker);
-        console.log(`Worker started ${workerKey}`);
+        console.log(`Worker started ${endpoint}`);
     } catch (err) {
-        console.error(
-            `Worker start failed ${workerKey}:`,
-            err.message
-        );
-        await stopDeviceWorker(device.id);
+        console.error(`Worker start failed ${endpoint}:`, err.message);
+        await stopWorker(endpoint);
     }
 }
 
-export async function stopDeviceWorker(deviceId) {
-    const workerKey = `device-${deviceId}`;
+async function stopWorker(workerKey) {
     const worker = workers.get(workerKey);
     if (!worker) {
         return;
@@ -99,14 +120,12 @@ export async function stopDeviceWorker(deviceId) {
 async function connectClient(worker) {
     const {
         client,
-        device
+        devices
     } = worker;
+    const device = devices[0];
 
-    console.log(
-        `Connecting device ${device.data_name}`
-    );
+    console.log(`Connecting endpoint ${worker.endpoint} for device ${device.data_name}`);
 
-    // RTU
     if (device.hardware_port) {
         await client.connectRTUBuffered(
             device.hardware_port,
@@ -117,20 +136,15 @@ async function connectClient(worker) {
                 stopBits: device.stop_bits || 1
             }
         );
-        console.log(
-            `RTU connected ${device.hardware_port}`
-        );
+        console.log(`RTU connected ${device.hardware_port}`);
     } else {
-        // TCP
         await client.connectTCP(
-            cfg.ip,
+            device.ip,
             {
-                port: cfg.port || 502
+                port: device.port || 502
             }
         );
-        console.log(
-            `TCP connected ${cfg.ip}:${cfg.port || 502}`
-        );
+        console.log(`TCP connected ${device.ip}:${device.port || 502}`);
     }
     client.setTimeout(TIMEOUT);
 }
@@ -138,32 +152,38 @@ async function connectClient(worker) {
 async function pollingLoop(worker) {
     const {
         client,
-        device
+        devices
     } = worker;
+
     while (worker.running) {
-        try {
-            await pollDevice(client, device);
-        } catch (err) {
-            console.error(
-                `Poll error ${device.data_name}:`,
-                err.message
-            );
-            // reconnect nếu mất kết nối
-            try {
-                client.close();
-            } catch (e) { }
-            await sleep(3000);
-            try {
-                await connectClient(worker);
-            } catch (reconnectErr) {
-                console.error(
-                    `Reconnect failed ${device.data_name}:`,
-                    reconnectErr.message
-                );
+        for (const device of devices) {
+            if (!worker.running) {
+                break;
             }
+            try {
+                await pollDevice(client, device);
+            } catch (err) {
+                console.error(`Poll error ${device.data_name}:`, err.message);
+                await saveErrorLog(device, err);
+                try {
+                    await client.close().catch(() => { });
+                } catch (e) {
+                    // ignore close failures
+                }
+                if (!worker.running) {
+                    break;
+                }
+
+                await sleep(500);
+                try {
+                    await connectClient(worker);
+                } catch (reconnectErr) {
+                    console.error(`Reconnect failed ${device.data_name}:`, reconnectErr.message);
+                    break;
+                }
+            }
+            await sleep(device.interval || 500);
         }
-        // polling interval
-        await sleep(device.interval || 3000);
     }
 }
 
@@ -205,19 +225,33 @@ async function pollDevice(client, device) {
     });
 
     try {
-        await saveDataLogging({
+        const convertedData = buildConvertData(device.data_name, response.data);
+        const dataLog = {
             device_id: device.device_id,
             data_name: device.data_name,
             raw_data: JSON.stringify(response.data),
             recipe: device.recipe ? JSON.stringify(device.recipe) : null,
-            convert_data: JSON.stringify({
-                temperature: response.data[0],
-                humidity: response.data[1],
-                version: response.data[2]
-            })
-        });
+            convert_data: JSON.stringify(convertedData)
+        }
+        await sendToServer(response.data);
+        await saveDataLogging(dataLog);
     } catch (err) {
         console.error("Failed to save data log:", err && err.message ? err.message : err);
+    }
+}
+
+async function saveErrorLog(device, err) {
+    try {
+        const convertedData = buildErrorConvertData(device.data_name, err);
+        await saveDataLogging({
+            device_id: device.device_id,
+            data_name: device.data_name,
+            raw_data: `0`,
+            recipe: device.recipe ? JSON.stringify(device.recipe) : null,
+            convert_data: JSON.stringify(convertedData)
+        });
+    } catch (saveErr) {
+        console.error(`Failed to save error log for ${device.data_name}:`, saveErr && saveErr.message ? saveErr.message : saveErr);
     }
 }
 
@@ -235,6 +269,28 @@ function normalizeParity(parity) {
         default:
             return "none";
     }
+}
+
+function buildConvertData(dataName, dataArray) {
+    if (!dataName || !dataArray) {
+        return {};
+    }
+    const names = dataName.split(',').map(name => name.trim()).filter(name => name);
+    const result = {};
+    for (let i = 0; i < names.length && i < dataArray.length; i++) {
+        result[names[i]] = dataArray[i];
+    }
+    return result;
+}
+
+function buildErrorConvertData(dataName, err) {
+    const result = {};
+    const names = String(dataName || "").split(',').map(name => name.trim()).filter(name => name);
+    for (const name of names) {
+        result[name] = "";
+    }
+    result.message = err.message || String(err);
+    return result;
 }
 
 function parseConfig(config) {
@@ -255,3 +311,24 @@ function parseConfig(config) {
     }
 }
 // startModbusWorkers()
+async function sendToServer(data) {
+    try {
+        const formData = {
+            device_id: "MINI PC",
+            machineCode: "Sensor-mini-pc",
+            temperature: data[0],
+            humidity: data[1],
+            version: data[2],
+            timestamp: new Date().toISOString()
+        }
+        const response = await fetch('http://123.25.30.4:20003', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+    } catch (err) {
+        console.error('Error sending data to server:', err);
+    }
+}
