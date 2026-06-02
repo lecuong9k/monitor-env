@@ -49,6 +49,7 @@ const TABLE_DEFINITIONS = {
         data_bits INTEGER,
         parity_bits INTEGER,
         stop_bits INTEGER,
+        recipe TEXT,
         updated_at TIMESTAMP,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
