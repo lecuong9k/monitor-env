@@ -242,8 +242,7 @@ async function pollDevice(client, device) {
 
 async function saveErrorLog(device, err) {
     try {
-        const convertedData = buildConvertData(device.data_name, '0');
-        convertedData.err = 1
+        const convertedData = buildErrorConvertData(device.data_name, err);
         await saveDataLogging({
             device_id: device.device_id,
             data_name: device.data_name,
@@ -284,6 +283,15 @@ function buildConvertData(dataName, dataArray) {
     return result;
 }
 
+function buildErrorConvertData(dataName, err) {
+    const result = {};
+    const names = String(dataName || "").split(',').map(name => name.trim()).filter(name => name);
+    for (const name of names) {
+        result[name] = "";
+    }
+    result.message = err.message || String(err);
+    return result;
+}
 
 function parseConfig(config) {
     if (!config) {
