@@ -20,6 +20,7 @@ export function findAllModbusRtu() {
       `
         SELECT *
         FROM modbus_rtu
+        WHERE COALESCE(isDelete, 0) = 0
         ORDER BY id DESC
     `,
     )
@@ -33,6 +34,7 @@ export function findModbusRtuById(id) {
         SELECT *
         FROM modbus_rtu
         WHERE id = ?
+          AND COALESCE(isDelete, 0) = 0
     `,
     )
     .get(id);
@@ -72,6 +74,9 @@ export function updateModbusRtu(id, record) {
 
 export function upsertModbusRtu(data) {
   const { id, ...payload } = data;
+  if (!id && payload.isDelete == null) {
+    payload.isDelete = 0;
+  }
   const keys = Object.keys(payload);
   const values = keys.map((key) => payload[key]);
 
@@ -101,7 +106,9 @@ export function deleteModbusRtu(id) {
   return db
     .prepare(
       `
-        DELETE FROM modbus_rtu
+        UPDATE modbus_rtu
+        SET isDelete = 1,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
     `,
     )
@@ -115,6 +122,7 @@ export function findDevicesByHardwarePort(hardwarePort) {
         SELECT *
         FROM modbus_rtu
         WHERE hardware_port = ?
+          AND COALESCE(isDelete, 0) = 0
     `,
     )
     .all(hardwarePort);
