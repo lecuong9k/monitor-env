@@ -20,6 +20,7 @@ const TABLE_DEFINITIONS = {
         byte_order INTEGER,
         unit TEXT,
         status INTEGER DEFAULT 1,
+        isDelete INTEGER DEFAULT 0,
         config_id INTEGER,
         updated_at TIMESTAMP,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -120,6 +121,19 @@ function ensureColumns() {
   if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "config_id")) {
     db.exec(`ALTER TABLE modbus_rtu ADD COLUMN config_id INTEGER`);
     added.push("modbus_rtu.config_id");
+  }
+
+  if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "isDelete")) {
+    db.exec(`ALTER TABLE modbus_rtu ADD COLUMN isDelete INTEGER DEFAULT 0`);
+    added.push("modbus_rtu.isDelete");
+  }
+
+  if (tableExists("modbus_rtu")) {
+    db.exec(`
+      UPDATE modbus_rtu
+      SET isDelete = 0
+      WHERE isDelete IS NULL
+    `);
   }
 
   if (tableExists("configs") && !columnExists("configs", "quantity")) {
