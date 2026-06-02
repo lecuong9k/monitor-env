@@ -34,5 +34,9 @@
     "fastify": "^5.8.5",
     "modbus-serial": "^8.0.25",
     "serialport": "^13.0.0"
+  },
+  "devDependencies": {
+    "fastify-tsconfig": "^3.0.0",
+    "typescript": "^6.0.3"
   }
 }
