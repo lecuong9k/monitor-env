@@ -15,6 +15,7 @@ export async function startModbusWorkers(devices = []) {
     const grouped = groupDevicesByEndpoint(DEVICES);
     console.log("Starting modbus workers for endpoints:", Array.from(grouped.keys()));
 
+    console.log('DEVICES: ', DEVICES);
     for (const [endpoint, devices] of grouped.entries()) {
         await startEndpointWorker(endpoint, devices);
     }
@@ -67,13 +68,12 @@ async function initConfig() {
                 mbrt.register_address,
                 mbrt.hardware_port,
                 mbrt.data_name,
-                c.* 
-            FROM modbus_rtu mbrt LEFT JOIN configs c
-            ON mbrt.config_id = c.id
+                c.*,
+                r.detail as recipe
+            FROM modbus_rtu mbrt LEFT JOIN configs c ON mbrt.config_id = c.id
+            LEFT JOIN recipe r ON r.id = mbrt.recipe_id
             WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
             `).all(hardwarePorts);
-    const existingPorts = DEVICES.map(d => d.hardware_port);
-    const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
     return DEVICES;
 }
 
@@ -225,7 +225,9 @@ async function pollDevice(client, device) {
     });
 
     try {
-        const convertedData = buildConvertData(device.data_name, response.data);
+        const data = device.recipe ? await calibrateFromString(response.data, device.recipe) : response.data
+        const convertedData = buildConvertData(device.data_name, data);
+
         const dataLog = {
             device_id: device.device_id,
             data_name: device.data_name,
@@ -287,7 +289,7 @@ function buildErrorConvertData(dataName, err) {
     const result = {};
     const names = String(dataName || "").split(',').map(name => name.trim()).filter(name => name);
     for (const name of names) {
-        result[name] = "";
+        result[name] = null;
     }
     result.message = err.message || String(err);
     return result;
@@ -330,5 +332,70 @@ async function sendToServer(data) {
         });
     } catch (err) {
         console.error('Error sending data to server:', err);
+    }
+}
+
+
+function calibrateSingleValue(value, formulaStr) {
+    const x = Number(value);
+    if (isNaN(x)) return value;
+
+    let formula = formulaStr.toLowerCase().replace(/y\s*=\s*/, "").replace(/\s+/g, "").replace(/,/g, ".");
+
+    const extractCoefficient = (power) => {
+        let regex;
+        if (power === 1) {
+            // Tìm số đứng trước 'x' nhưng không phải 'x^2' hay 'x^3'
+            regex = /([+-]?\d*\.?\d*)\*?x(?!\^)/;
+        } else {
+            // Tìm số đứng trước 'x^3' hoặc 'x^2'
+            regex = new RegExp(`([+-]?\\d*\\.?\\d*)\\*?x\\^${power}`);
+        }
+
+        const match = formula.match(regex);
+        if (match) {
+            const coefStr = match[1];
+            if (coefStr === "" || coefStr === "+") return 1;
+            if (coefStr === "-") return -1;
+            return Number(coefStr);
+        }
+        return 0; // Nếu phương trình không có bậc này thì hệ số bằng 0
+    };
+
+    //   Tự động bóc tách các hệ số theo từng bậc
+    const A = extractCoefficient(3); // Hệ số của x^3
+    const B = extractCoefficient(2); // Hệ số của x^2
+    const C = extractCoefficient(1); // Hệ số của x (bậc 1)
+
+    //  Tìm số tự do D (loại bỏ sạch các cụm chứa x để lấy số còn lại)
+    let cleanForm = formula
+        .replace(/[+-]?\d*\.?\d*\*?x\^3/g, "")
+        .replace(/[+-]?\d*\.?\d*\*?x\^2/g, "")
+        .replace(/[+-]?\d*\.?\d*\*?x/g, "");
+
+    const D = Number(cleanForm) || 0;
+
+    //  Tính toán kết quả theo mô hình tổng quát phương trình bậc 3:
+    // Nếu là bậc 2 thì A tự động bằng 0. Nếu là bậc 1 thì A và B tự động bằng 0.
+    const result = (A * (x ** 3)) + (B * (x ** 2)) + (C * x) + D;
+    // Trả về kết quả làm tròn 4 chữ số thập phân cho sạch dữ liệu
+    return Number(result.toFixed(4));
+}
+
+async function calibrateFromString(rawValue, formulaStr) {
+    if (!formulaStr) return rawValue;
+
+    try {
+        // Xử lý mảng giá trị và trả về mảng kết quả
+        if (Array.isArray(rawValue)) {
+            return rawValue.map(value => calibrateSingleValue(value, formulaStr));
+        }
+
+        // Xử lý giá trị đơn lẻ (tương thích ngược)
+        return calibrateSingleValue(rawValue, formulaStr);
+
+    } catch (err) {
+        console.error("Lỗi xử lý công thức hiệu chuẩn:", err.message);
+        return rawValue; // Trả về giá trị gốc nếu có sự cố
     }
 }
