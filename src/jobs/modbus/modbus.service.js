@@ -5,6 +5,7 @@ import { saveDataLogging } from "../../services/data-logging.service.js";
 
 const workers = new Map();
 const TIMEOUT = 3000;
+let DATA_DEVICE = {};
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -156,6 +157,7 @@ async function pollingLoop(worker) {
     } = worker;
 
     while (worker.running) {
+        DATA_DEVICE = {};
         for (const device of devices) {
             if (!worker.running) {
                 break;
@@ -184,6 +186,7 @@ async function pollingLoop(worker) {
             }
             await sleep(device.interval || 500);
         }
+        await sendToServer(DATA_DEVICE);
     }
 }
 
@@ -227,7 +230,7 @@ async function pollDevice(client, device) {
     try {
         const data = device.recipe ? await calibrateFromString(response.data, device.recipe) : response.data
         const convertedData = buildConvertData(device.data_name, data);
-
+        Object.assign(DATA_DEVICE, convertedData);
         const dataLog = {
             device_id: device.device_id,
             data_name: device.data_name,
@@ -235,7 +238,7 @@ async function pollDevice(client, device) {
             recipe: device.recipe ? JSON.stringify(device.recipe) : null,
             convert_data: JSON.stringify(convertedData)
         }
-        await sendToServer(response.data);
+        // await sendToServer(response.data);
         await saveDataLogging(dataLog);
     } catch (err) {
         console.error("Failed to save data log:", err && err.message ? err.message : err);
@@ -277,7 +280,10 @@ function buildConvertData(dataName, dataArray) {
     if (!dataName || !dataArray) {
         return {};
     }
-    const names = dataName.split(',').map(name => name.trim()).filter(name => name);
+    const names = dataName.split(',').map(name => {
+        // Trim và loại bỏ dấu nháy đơn/kép ở đầu và cuối
+        return name.trim().replace(/^['"]|['"]$/g, '');
+    }).filter(name => name);
     const result = {};
     for (let i = 0; i < names.length && i < dataArray.length; i++) {
         result[names[i]] = dataArray[i];
@@ -315,20 +321,30 @@ function parseConfig(config) {
 // startModbusWorkers()
 async function sendToServer(data) {
     try {
-        const formData = {
+        const normalizedData = {};
+        const keepLowercase = ['temperature', 'humidity', 'ver'];
+        for (const [key, value] of Object.entries(data)) {
+            if (keepLowercase.includes(key)) {
+                normalizedData[key] = value;
+            } else {
+                normalizedData[key.toUpperCase()] = value;
+            }
+        }
+        const payload = {
             device_id: "MINI PC",
             machineCode: "Sensor-mini-pc",
-            temperature: data[0],
-            humidity: data[1],
-            version: data[2],
+            deviceModel: "MINI PC 001",
+            ...normalizedData, // Trải phẳng dữ liệu đã được chuẩn hóa tự động ở trên
             timestamp: new Date().toISOString()
-        }
+        };
+
+        console.log('Payload thực tế gửi đi:', JSON.stringify(payload));
         const response = await fetch('http://123.25.30.4:20003', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(formData)
+            body: JSON.stringify(payload)
         });
     } catch (err) {
         console.error('Error sending data to server:', err);
