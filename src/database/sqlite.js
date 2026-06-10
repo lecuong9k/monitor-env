@@ -20,8 +20,8 @@ const TABLE_DEFINITIONS = {
         byte_order INTEGER,
         unit TEXT,
         status INTEGER DEFAULT 1,
-        isDelete INTEGER DEFAULT 0,
         config_id INTEGER,
+        recipe_id INTEGER,
         updated_at TIMESTAMP,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -50,8 +50,18 @@ const TABLE_DEFINITIONS = {
         data_bits INTEGER,
         parity_bits INTEGER,
         stop_bits INTEGER,
+        recipe TEXT,
         updated_at TIMESTAMP,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `,
+  recipe: `
+    CREATE TABLE IF NOT EXISTS recipe (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        detail TEXT,
+        updated_at TIMESTAMP,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP  
     )
   `,
 };
@@ -123,22 +133,14 @@ function ensureColumns() {
     added.push("modbus_rtu.config_id");
   }
 
-  if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "isDelete")) {
-    db.exec(`ALTER TABLE modbus_rtu ADD COLUMN isDelete INTEGER DEFAULT 0`);
-    added.push("modbus_rtu.isDelete");
-  }
-
-  if (tableExists("modbus_rtu")) {
-    db.exec(`
-      UPDATE modbus_rtu
-      SET isDelete = 0
-      WHERE isDelete IS NULL
-    `);
-  }
-
   if (tableExists("configs") && !columnExists("configs", "quantity")) {
     db.exec(`ALTER TABLE configs ADD COLUMN quantity INTEGER`);
     added.push("configs.quantity");
+  }
+
+  if (!tableExists("recipe")) {
+    db.exec(TABLE_DEFINITIONS.recipe);
+    added.push("recipe");
   }
 
   if (

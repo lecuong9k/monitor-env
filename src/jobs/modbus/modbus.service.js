@@ -5,6 +5,7 @@ import { saveDataLogging } from "../../services/data-logging.service.js";
 
 const workers = new Map();
 const TIMEOUT = 3000;
+let DATA_DEVICE = {};
 function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -15,6 +16,7 @@ export async function startModbusWorkers(devices = []) {
     const grouped = groupDevicesByEndpoint(DEVICES);
     console.log("Starting modbus workers for endpoints:", Array.from(grouped.keys()));
 
+    console.log('DEVICES: ', DEVICES);
     for (const [endpoint, devices] of grouped.entries()) {
         await startEndpointWorker(endpoint, devices);
     }
@@ -67,13 +69,12 @@ async function initConfig() {
                 mbrt.register_address,
                 mbrt.hardware_port,
                 mbrt.data_name,
-                c.* 
-            FROM modbus_rtu mbrt LEFT JOIN configs c
-            ON mbrt.config_id = c.id
+                c.*,
+                r.detail as recipe
+            FROM modbus_rtu mbrt LEFT JOIN configs c ON mbrt.config_id = c.id
+            LEFT JOIN recipe r ON r.id = mbrt.recipe_id
             WHERE mbrt.hardware_port IN (${hardwarePorts.map(() => '?').join(',')})
             `).all(hardwarePorts);
-    const existingPorts = DEVICES.map(d => d.hardware_port);
-    const missingPorts = hardwarePorts.filter(p => !existingPorts.includes(p));
     return DEVICES;
 }
 
@@ -156,6 +157,7 @@ async function pollingLoop(worker) {
     } = worker;
 
     while (worker.running) {
+        DATA_DEVICE = {};
         for (const device of devices) {
             if (!worker.running) {
                 break;
@@ -184,6 +186,7 @@ async function pollingLoop(worker) {
             }
             await sleep(device.interval || 500);
         }
+        await sendToServer(DATA_DEVICE);
     }
 }
 
@@ -225,7 +228,9 @@ async function pollDevice(client, device) {
     });
 
     try {
-        const convertedData = buildConvertData(device.data_name, response.data);
+        const data = device.recipe ? await calibrateFromString(response.data, device.recipe) : response.data
+        const convertedData = buildConvertData(device.data_name, data);
+        Object.assign(DATA_DEVICE, convertedData);
         const dataLog = {
             device_id: device.device_id,
             data_name: device.data_name,
@@ -233,7 +238,7 @@ async function pollDevice(client, device) {
             recipe: device.recipe ? JSON.stringify(device.recipe) : null,
             convert_data: JSON.stringify(convertedData)
         }
-        await sendToServer(response.data);
+        // await sendToServer(response.data);
         await saveDataLogging(dataLog);
     } catch (err) {
         console.error("Failed to save data log:", err && err.message ? err.message : err);
@@ -275,7 +280,10 @@ function buildConvertData(dataName, dataArray) {
     if (!dataName || !dataArray) {
         return {};
     }
-    const names = dataName.split(',').map(name => name.trim()).filter(name => name);
+    const names = dataName.split(',').map(name => {
+        // Trim và loại bỏ dấu nháy đơn/kép ở đầu và cuối
+        return name.trim().replace(/^['"]|['"]$/g, '');
+    }).filter(name => name);
     const result = {};
     for (let i = 0; i < names.length && i < dataArray.length; i++) {
         result[names[i]] = dataArray[i];
@@ -287,7 +295,7 @@ function buildErrorConvertData(dataName, err) {
     const result = {};
     const names = String(dataName || "").split(',').map(name => name.trim()).filter(name => name);
     for (const name of names) {
-        result[name] = "";
+        result[name] = null;
     }
     result.message = err.message || String(err);
     return result;
@@ -313,22 +321,97 @@ function parseConfig(config) {
 // startModbusWorkers()
 async function sendToServer(data) {
     try {
-        const formData = {
+        const normalizedData = {};
+        const keepLowercase = ['temperature', 'humidity', 'ver'];
+        for (const [key, value] of Object.entries(data)) {
+            if (keepLowercase.includes(key)) {
+                normalizedData[key] = value;
+            } else {
+                normalizedData[key.toUpperCase()] = value;
+            }
+        }
+        const payload = {
             device_id: "MINI PC",
             machineCode: "Sensor-mini-pc",
-            temperature: data[0],
-            humidity: data[1],
-            version: data[2],
+            deviceModel: "MINI PC 001",
+            ...normalizedData, // Trải phẳng dữ liệu đã được chuẩn hóa tự động ở trên
             timestamp: new Date().toISOString()
-        }
+        };
+
+        console.log('Payload thực tế gửi đi:', JSON.stringify(payload));
         const response = await fetch('http://123.25.30.4:20003', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(formData)
+            body: JSON.stringify(payload)
         });
     } catch (err) {
         console.error('Error sending data to server:', err);
+    }
+}
+
+
+function calibrateSingleValue(value, formulaStr) {
+    const x = Number(value);
+    if (isNaN(x)) return value;
+
+    let formula = formulaStr.toLowerCase().replace(/y\s*=\s*/, "").replace(/\s+/g, "").replace(/,/g, ".");
+
+    const extractCoefficient = (power) => {
+        let regex;
+        if (power === 1) {
+            // Tìm số đứng trước 'x' nhưng không phải 'x^2' hay 'x^3'
+            regex = /([+-]?\d*\.?\d*)\*?x(?!\^)/;
+        } else {
+            // Tìm số đứng trước 'x^3' hoặc 'x^2'
+            regex = new RegExp(`([+-]?\\d*\\.?\\d*)\\*?x\\^${power}`);
+        }
+
+        const match = formula.match(regex);
+        if (match) {
+            const coefStr = match[1];
+            if (coefStr === "" || coefStr === "+") return 1;
+            if (coefStr === "-") return -1;
+            return Number(coefStr);
+        }
+        return 0; // Nếu phương trình không có bậc này thì hệ số bằng 0
+    };
+
+    //   Tự động bóc tách các hệ số theo từng bậc
+    const A = extractCoefficient(3); // Hệ số của x^3
+    const B = extractCoefficient(2); // Hệ số của x^2
+    const C = extractCoefficient(1); // Hệ số của x (bậc 1)
+
+    //  Tìm số tự do D (loại bỏ sạch các cụm chứa x để lấy số còn lại)
+    let cleanForm = formula
+        .replace(/[+-]?\d*\.?\d*\*?x\^3/g, "")
+        .replace(/[+-]?\d*\.?\d*\*?x\^2/g, "")
+        .replace(/[+-]?\d*\.?\d*\*?x/g, "");
+
+    const D = Number(cleanForm) || 0;
+
+    //  Tính toán kết quả theo mô hình tổng quát phương trình bậc 3:
+    // Nếu là bậc 2 thì A tự động bằng 0. Nếu là bậc 1 thì A và B tự động bằng 0.
+    const result = (A * (x ** 3)) + (B * (x ** 2)) + (C * x) + D;
+    // Trả về kết quả làm tròn 4 chữ số thập phân cho sạch dữ liệu
+    return Number(result.toFixed(4));
+}
+
+async function calibrateFromString(rawValue, formulaStr) {
+    if (!formulaStr) return rawValue;
+
+    try {
+        // Xử lý mảng giá trị và trả về mảng kết quả
+        if (Array.isArray(rawValue)) {
+            return rawValue.map(value => calibrateSingleValue(value, formulaStr));
+        }
+
+        // Xử lý giá trị đơn lẻ (tương thích ngược)
+        return calibrateSingleValue(rawValue, formulaStr);
+
+    } catch (err) {
+        console.error("Lỗi xử lý công thức hiệu chuẩn:", err.message);
+        return rawValue; // Trả về giá trị gốc nếu có sự cố
     }
 }
