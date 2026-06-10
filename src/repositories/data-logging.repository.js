@@ -1,6 +1,12 @@
 import db from "../database/sqlite.js";
 
-const COLUMNS = ["device_id", "data_name", "raw_data", "recipe", "convert_data"];
+const COLUMNS = [
+  "device_id",
+  "data_name",
+  "raw_data",
+  "recipe",
+  "convert_data",
+];
 
 export function findDataLoggingByDeviceId(deviceId) {
   return db
@@ -25,6 +31,44 @@ export function findAllDataLogging() {
     `,
     )
     .all();
+}
+
+/** Một bản ghi mới nhất cho mỗi cặp (device_id, data_name). */
+export function findLatestDataLogging() {
+  return db
+    .prepare(
+      `
+        SELECT d.*
+        FROM data_logging d
+        INNER JOIN (
+          SELECT MAX(id) AS id
+          FROM data_logging
+          GROUP BY COALESCE(device_id, ''), COALESCE(data_name, '')
+        ) latest ON d.id = latest.id
+        ORDER BY d.id DESC
+    `,
+    )
+    .all();
+}
+
+export function findDataLoggingHistory({
+  fromIso,
+  toIso,
+  sensorClause,
+  sensorParams,
+}) {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM data_logging
+        WHERE datetime(COALESCE(updated_at, created_at)) >= datetime(?)
+          AND datetime(COALESCE(updated_at, created_at)) <= datetime(?)
+          AND ${sensorClause}
+        ORDER BY datetime(COALESCE(updated_at, created_at)) ASC, id ASC
+    `,
+    )
+    .all(fromIso, toIso, ...sensorParams);
 }
 
 export function findDataLoggingById(id) {

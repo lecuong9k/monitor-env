@@ -3,42 +3,38 @@ import {
   addReadingsClient,
   removeReadingsClient,
 } from "../realtime/readings-hub.js";
-import { getAllDataLogging } from "../services/data-logging.service.js";
+import { getLatestDataLogging } from "../services/data-logging.service.js";
 
 export default async function wsRoutes(fastify) {
   await fastify.register(websocket);
 
-  fastify.get(
-    "/ws/readings",
-    { websocket: true },
-    (socket, _request) => {
-      addReadingsClient(socket);
+  fastify.get("/ws/readings", { websocket: true }, (socket, _request) => {
+    addReadingsClient(socket);
 
-      socket.on("close", () => {
-        removeReadingsClient(socket);
-      });
+    socket.on("close", () => {
+      removeReadingsClient(socket);
+    });
 
-      socket.on("error", () => {
-        removeReadingsClient(socket);
-      });
+    socket.on("error", () => {
+      removeReadingsClient(socket);
+    });
 
-      try {
-        const records = getAllDataLogging();
-        socket.send(
-          JSON.stringify({
-            type: "snapshot",
-            records,
-            at: new Date().toISOString(),
-          }),
-        );
-      } catch (err) {
-        socket.send(
-          JSON.stringify({
-            type: "error",
-            message: err?.message ?? "Failed to load snapshot",
-          }),
-        );
-      }
-    },
-  );
+    try {
+      const records = getLatestDataLogging();
+      socket.send(
+        JSON.stringify({
+          type: "snapshot",
+          records,
+          at: new Date().toISOString(),
+        }),
+      );
+    } catch (err) {
+      socket.send(
+        JSON.stringify({
+          type: "error",
+          message: err?.message ?? "Failed to load snapshot",
+        }),
+      );
+    }
+  });
 }
