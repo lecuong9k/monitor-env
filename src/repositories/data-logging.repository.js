@@ -71,6 +71,20 @@ export function findDataLoggingHistory({
     .all(fromIso, toIso, ...sensorParams);
 }
 
+export function findLatestDataLoggingByDeviceId(deviceId) {
+  return db
+    .prepare(
+      `
+        SELECT *
+        FROM data_logging
+        WHERE device_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+    `,
+    )
+    .get(deviceId);
+}
+
 export function findDataLoggingById(id) {
   return db
     .prepare(

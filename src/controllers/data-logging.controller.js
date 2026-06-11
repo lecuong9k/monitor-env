@@ -1,6 +1,7 @@
 import {
   getAllDataLogging,
   getLatestDataLogging,
+  getLatestDataLoggingByDeviceId,
   getDataLoggingHistory,
   getDataLogging,
   saveDataLogging,
@@ -13,6 +14,23 @@ export async function getDataLoggingsController() {
 
 export async function getLatestDataLoggingsController() {
   return getLatestDataLogging();
+}
+
+export async function getLatestDataLoggingByDeviceController(request, reply) {
+  try {
+    const { deviceId } = request.params;
+    const row = getLatestDataLoggingByDeviceId(deviceId);
+    if (!row) {
+      return reply.code(404).send({
+        error: "Data logging not found",
+      });
+    }
+    return row;
+  } catch (err) {
+    return reply.code(400).send({
+      error: err.message,
+    });
+  }
 }
 
 export async function getDataLoggingHistoryController(request, reply) {
