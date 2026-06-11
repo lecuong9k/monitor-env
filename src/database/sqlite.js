@@ -59,9 +59,11 @@ const TABLE_DEFINITIONS = {
     CREATE TABLE IF NOT EXISTS recipe (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
-        detail TEXT,
+        formula TEXT,
+        float INTEGER DEFAULT 1,
+        device_id TEXT,
         updated_at TIMESTAMP,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP  
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
 };
@@ -133,6 +135,11 @@ function ensureColumns() {
     added.push("modbus_rtu.config_id");
   }
 
+  if (tableExists("modbus_rtu") && !columnExists("modbus_rtu", "recipe_id")) {
+    db.exec(`ALTER TABLE modbus_rtu ADD COLUMN recipe_id INTEGER`);
+    added.push("modbus_rtu.recipe_id");
+  }
+
   if (tableExists("configs") && !columnExists("configs", "quantity")) {
     db.exec(`ALTER TABLE configs ADD COLUMN quantity INTEGER`);
     added.push("configs.quantity");
@@ -141,6 +148,24 @@ function ensureColumns() {
   if (!tableExists("recipe")) {
     db.exec(TABLE_DEFINITIONS.recipe);
     added.push("recipe");
+  }
+
+  if (tableExists("recipe") && !columnExists("recipe", "formula")) {
+    db.exec(`ALTER TABLE recipe ADD COLUMN formula TEXT`);
+    if (columnExists("recipe", "detail")) {
+      db.exec(`UPDATE recipe SET formula = detail WHERE formula IS NULL`);
+    }
+    added.push("recipe.formula");
+  }
+
+  if (tableExists("recipe") && !columnExists("recipe", "device_id")) {
+    db.exec(`ALTER TABLE recipe ADD COLUMN device_id TEXT`);
+    added.push("recipe.device_id");
+  }
+
+  if (tableExists("recipe") && !columnExists("recipe", "float")) {
+    db.exec(`ALTER TABLE recipe ADD COLUMN float INTEGER DEFAULT 1`);
+    added.push("recipe.float");
   }
 
   if (

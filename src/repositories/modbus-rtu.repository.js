@@ -12,6 +12,7 @@ const COLUMNS = [
   "unit",
   "status",
   "config_id",
+  "recipe_id",
 ];
 
 export function findAllModbusRtu() {

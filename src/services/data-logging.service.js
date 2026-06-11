@@ -1,6 +1,7 @@
 import {
   findAllDataLogging,
   findLatestDataLogging,
+  findLatestDataLoggingByDeviceId,
   findDataLoggingHistory,
   findDataLoggingById,
   upsertDataLogging,
@@ -35,6 +36,13 @@ export function getAllDataLogging() {
 
 export function getLatestDataLogging() {
   return findLatestDataLogging();
+}
+
+export function getLatestDataLoggingByDeviceId(deviceId) {
+  if (!deviceId) {
+    throw new Error("deviceId is required");
+  }
+  return findLatestDataLoggingByDeviceId(deviceId) ?? null;
 }
 
 export function getDataLoggingHistory({ sensor, dateFrom, dateTo }) {

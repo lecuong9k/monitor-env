@@ -6,6 +6,7 @@ import fastifyStatic from "@fastify/static";
 import configsRoutes from "./routes/config.route.js";
 import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
 import dataLoggingRoutes from "./routes/data-logging.routes.js";
+import recipeRoutes from "./routes/recipe.routes.js";
 import wsRoutes from "./routes/ws.routes.js";
 import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
 
@@ -42,6 +43,7 @@ await registerSecurity(fastify);
 fastify.register(configsRoutes);
 fastify.register(modbusRtuRoutes);
 fastify.register(dataLoggingRoutes);
+fastify.register(recipeRoutes);
 await fastify.register(wsRoutes);
 
 fastify.get("/health", async () => {
