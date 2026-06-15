@@ -8,9 +8,16 @@ import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
 import dataLoggingRoutes from "./routes/data-logging.routes.js";
 import recipeRoutes from "./routes/recipe.routes.js";
 import wsRoutes from "./routes/ws.routes.js";
+import cameraRoutes from "./routes/camera.routes.js";
 import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
+import {
+  initStreamService,
+  stopAllStreams,
+} from "./services/stream.service.js";
+import { config as cameraConfig } from "./config/camera.config.js";
 
 import { registerSecurity } from "./plugins/security.js";
+import { registerWebsocket } from "./plugins/websocket.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const beRoot = path.join(__dirname, "..");
@@ -39,12 +46,22 @@ const fastify = Fastify({
 });
 
 await registerSecurity(fastify);
+await registerWebsocket(fastify);
 
 fastify.register(configsRoutes);
 fastify.register(modbusRtuRoutes);
 fastify.register(dataLoggingRoutes);
 fastify.register(recipeRoutes);
 await fastify.register(wsRoutes);
+await fastify.register(cameraRoutes);
+
+if (cameraConfig.streamMode === "hls") {
+  await fastify.register(fastifyStatic, {
+    root: cameraConfig.hlsOutputDir,
+    prefix: "/streams/",
+    decorateReply: false,
+  });
+}
 
 fastify.get("/health", async () => {
   return {
@@ -78,7 +95,9 @@ if (hasFeDist) {
 
     if (
       url.startsWith("/assets/") ||
-      /\.(css|js|mjs|svg|ico|png|jpg|jpeg|webp|woff2?)$/i.test(url)
+      url.startsWith("/streams/") ||
+      url.startsWith("/cameras/") ||
+      /\.(css|js|mjs|svg|ico|png|jpg|jpeg|webp|woff2?|m3u8|ts)$/i.test(url)
     ) {
       return reply.code(404).type("text/plain").send("Not found");
     }
@@ -107,6 +126,13 @@ if (hasFeDist) {
 
 const start = async () => {
   try {
+    await initStreamService().catch((err) => {
+      fastify.log.warn(
+        { err },
+        "Camera stream chưa sẵn sàng — kiểm tra CAMERA_* trong .env",
+      );
+    });
+
     await fastify.listen({
       port: Number(process.env.PORT) || 3000,
       host: process.env.HOST || "0.0.0.0",
@@ -114,7 +140,7 @@ const start = async () => {
     console.log("Server started");
     if (hasFeDist) {
       console.log(
-        `Web UI: http://<device-ip>:${Number(process.env.PORT) || 3000}/`,
+        `Web UI: http://<device-ip>:${Number(process.env.PORT) || 3000}/#/camera`,
       );
     }
   } catch (err) {
@@ -125,3 +151,11 @@ const start = async () => {
 
 start();
 startModbusWorkers();
+
+const shutdown = () => {
+  stopAllStreams();
+  process.exit(0);
+};
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
