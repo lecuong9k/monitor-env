@@ -1,4 +1,3 @@
-import websocket from "@fastify/websocket";
 import {
   addReadingsClient,
   removeReadingsClient,
@@ -6,8 +5,6 @@ import {
 import { getLatestDataLogging } from "../services/data-logging.service.js";
 
 export default async function wsRoutes(fastify) {
-  await fastify.register(websocket);
-
   fastify.get("/ws/readings", { websocket: true }, (socket, _request) => {
     addReadingsClient(socket);
 
