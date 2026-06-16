@@ -18,6 +18,7 @@ import { config as cameraConfig } from "./config/camera.config.js";
 
 import { registerSecurity } from "./plugins/security.js";
 import { registerWebsocket } from "./plugins/websocket.js";
+import { startServer } from "./jobs/camera/agent.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const beRoot = path.join(__dirname, "..");
@@ -165,7 +166,8 @@ const start = async () => {
 
 start();
 startModbusWorkers();
-
+// Camera -> Server
+startServer()
 const shutdown = () => {
   stopAllStreams();
   process.exit(0);

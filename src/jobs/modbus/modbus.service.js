@@ -120,7 +120,7 @@ async function stopWorker(workerKey) {
 
   worker.running = false;
   try {
-    await worker.client.close().catch(() => {});
+    await worker.client.close().catch(() => { });
   } catch (err) {
     // ignore close failures when port is already closed
   }
@@ -168,7 +168,7 @@ async function pollingLoop(worker) {
         console.error(`Poll error ${device.data_name}:`, err.message);
         await saveErrorLog(device, err);
         try {
-          await client.close().catch(() => {});
+          await client.close().catch(() => { });
         } catch (e) {
           // ignore close failures
         }
@@ -219,10 +219,10 @@ async function pollDevice(client, device) {
   try {
     const data = device.recipe
       ? await calibrateFromString(
-          response.data,
-          device.recipe,
-          device.recipe_float,
-        )
+        response.data,
+        device.recipe,
+        device.recipe_float,
+      )
       : response.data;
     const convertedData = buildConvertData(device.data_name, data);
     Object.assign(DATA_DEVICE, convertedData);
@@ -343,7 +343,7 @@ async function sendToServer(data) {
     };
 
     console.log("Payload thực tế gửi đi:", JSON.stringify(payload));
-    const response = await fetch("http://123.25.30.4:20003", {
+    const response = await fetch("http://45.76.152.73:20003", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
