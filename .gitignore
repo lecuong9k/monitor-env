@@ -2,6 +2,7 @@ node_modules/
 package-lock.json
 data/
 logs/
+streams/
 .env
 .env.local
 dist/
