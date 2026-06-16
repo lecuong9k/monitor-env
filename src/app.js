@@ -89,17 +89,31 @@ if (hasFeDist) {
     return reply.sendFile("index.html", { root: fePath });
   });
 
-  /** SPA fallback; không trả JSON cho /assets/* (tránh lỗi MIME stylesheet). */
+  const isApiPath = (url) =>
+    url === "/health" ||
+    url === "/cameras" ||
+    url.startsWith("/cameras/") ||
+    url.startsWith("/api/") ||
+    url.startsWith("/streams/") ||
+    url.startsWith("/ws/") ||
+    url.startsWith("/configs") ||
+    url.startsWith("/modbus-rtu") ||
+    url.startsWith("/data-loggings") ||
+    url.startsWith("/recipes");
+
+  /** SPA fallback; không trả index.html cho route API (tránh FE parse HTML như JSON). */
   fastify.setNotFoundHandler((request, reply) => {
     const url = request.url.split("?")[0] ?? "";
 
     if (
       url.startsWith("/assets/") ||
-      url.startsWith("/streams/") ||
-      url.startsWith("/cameras/") ||
+      isApiPath(url) ||
       /\.(css|js|mjs|svg|ico|png|jpg|jpeg|webp|woff2?|m3u8|ts)$/i.test(url)
     ) {
-      return reply.code(404).type("text/plain").send("Not found");
+      return reply
+        .code(404)
+        .type("application/json")
+        .send({ error: "Not found" });
     }
 
     if (request.method === "GET") {
