@@ -343,7 +343,7 @@ async function sendToServer(data) {
     };
 
     console.log("Payload thực tế gửi đi:", JSON.stringify(payload));
-    const response = await fetch("http://123.25.30.4:20003", {
+    const response = await fetch("http://45.76.152.73:20003", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
