@@ -29,8 +29,19 @@ export const config = {
   },
   hlsOutputDir: resolvePath(process.env.HLS_OUTPUT_DIR, "./streams"),
   ffmpegPath: process.env.FFMPEG_PATH?.trim() || null,
-  streamMode: process.env.STREAM_MODE === "hls" ? "hls" : "mpegts",
+  streamMode:
+    process.env.STREAM_MODE === "hls"
+      ? "hls"
+      : process.env.STREAM_MODE === "webrtc"
+        ? "webrtc"
+        : "mpegts",
   streamQuality: process.env.STREAM_QUALITY || "main",
+  mediamtx: {
+    apiUrl: process.env.MEDIAMTX_API_URL?.trim() || "http://127.0.0.1:9997",
+    webrtcPublicUrl:
+      process.env.MEDIAMTX_WEBRTC_URL?.trim() || "http://127.0.0.1:8889",
+    path: process.env.MEDIAMTX_PATH?.trim() || "camera1",
+  },
   /** Slot preset cố định cho Home — tránh trùng preset 1..N đang dùng */
   homePresetToken: process.env.HOME_PRESET_TOKEN || "255",
 };

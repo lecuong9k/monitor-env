@@ -15,6 +15,14 @@ import {
   resolveFfmpegPath,
 } from "../utils/ffmpeg-path.js";
 import { resolveRtspUrl } from "./onvif.service.js";
+import {
+  checkMediamtxAvailable,
+  clearPathSource,
+  ensurePathSource,
+  getWebRtcPageUrl,
+  getWhepUrl,
+  waitPathOnline,
+} from "./mediamtx.service.js";
 
 /** @type {import('fluent-ffmpeg').FfmpegCommand | null} */
 let ffmpegProcess = null;
@@ -28,6 +36,7 @@ let currentRtspUrl = null;
 /** @type {import('../config/stream-quality.js').StreamQualityId} */
 let currentQualityId = resolveStreamQualityId(config.streamQuality);
 let transcodeMode = false;
+let mtxActive = false;
 
 const HLS_DIR = path.join(path.resolve(config.hlsOutputDir), "live");
 const HLS_PLAYLIST = path.join(HLS_DIR, "index.m3u8");
@@ -271,6 +280,7 @@ async function startHlsStream(source, quality) {
 }
 
 export function isStreaming() {
+  if (config.streamMode === "webrtc") return mtxActive;
   return ffmpegProcess !== null;
 }
 
@@ -291,6 +301,19 @@ export function getStreamQualityState() {
 export function getStreamStatus(cameraId = 1) {
   const streaming = isStreaming();
   const qualityState = getStreamQualityState();
+
+  if (config.streamMode === "webrtc") {
+    const whepUrl = getWhepUrl();
+    return {
+      streaming,
+      mode: "webrtc",
+      rtspUrl: currentRtspUrl,
+      stream_type: "webrtc",
+      stream_url: getWebRtcPageUrl(),
+      whep_url: streaming ? whepUrl : null,
+      ...qualityState,
+    };
+  }
 
   if (config.streamMode === "hls") {
     return {
@@ -319,13 +342,16 @@ export function getStreamStatus(cameraId = 1) {
   };
 }
 
-export async function startCameraStream(cameraId = 1) {
-  if (ffmpegProcess) {
-    return { ok: true, alreadyRunning: true, ...getStreamStatus(cameraId) };
-  }
+async function startWebRtcStream(source) {
+  const pathName = config.mediamtx.path;
+  await ensurePathSource(pathName, source);
+  await waitPathOnline(pathName);
+  mtxActive = true;
+}
 
-  if (!ffmpegPath) {
-    throw new Error(`Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`);
+export async function startCameraStream(cameraId = 1) {
+  if (isStreaming()) {
+    return { ok: true, alreadyRunning: true, ...getStreamStatus(cameraId) };
   }
 
   const quality = getStreamQualityPreset(currentQualityId);
@@ -338,16 +364,37 @@ export async function startCameraStream(cameraId = 1) {
 
   currentRtspUrl = source;
 
-  if (config.streamMode === "hls") {
-    await startHlsStream(source, quality);
+  if (config.streamMode === "webrtc") {
+    await startWebRtcStream(source);
   } else {
-    await startMpegtsStream(source, quality);
+    if (!ffmpegPath) {
+      throw new Error(
+        `Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`,
+      );
+    }
+
+    if (config.streamMode === "hls") {
+      await startHlsStream(source, quality);
+    } else {
+      await startMpegtsStream(source, quality);
+    }
   }
 
   return { ok: true, alreadyRunning: false, ...getStreamStatus(cameraId) };
 }
 
 export async function stopCameraStream() {
+  if (config.streamMode === "webrtc") {
+    if (!mtxActive) {
+      return { ok: true, stopped: false };
+    }
+
+    await clearPathSource(config.mediamtx.path);
+    mtxActive = false;
+    currentRtspUrl = null;
+    return { ok: true, stopped: true };
+  }
+
   if (!ffmpegProcess) {
     return { ok: true, stopped: false };
   }
@@ -432,5 +479,9 @@ export function stopAllStreams() {
 }
 
 export async function initStreamService() {
+  if (config.streamMode === "webrtc") {
+    await checkMediamtxAvailable();
+    return;
+  }
   ensureHlsDir();
 }

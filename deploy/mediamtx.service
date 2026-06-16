@@ -1,0 +1,20 @@
+[Unit]
+Description=MediaMTX RTSP to WebRTC (monitor-env)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/monitor-env-be
+ExecStart=/opt/monitor-env-be/mediamtx /opt/monitor-env-be/mediamtx.production.yml
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+
+# Log vào journal: journalctl -u mediamtx -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

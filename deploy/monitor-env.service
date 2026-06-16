@@ -1,0 +1,20 @@
+[Unit]
+Description=monitor-env backend (Fastify)
+After=network-online.target mediamtx.service
+Wants=network-online.target
+Requires=mediamtx.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/monitor-env-be
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node --import ./src/load-env.js src/app.js
+Restart=always
+RestartSec=5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
