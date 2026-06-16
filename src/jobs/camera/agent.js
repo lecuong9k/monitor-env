@@ -1,149 +1,162 @@
-import Fastify from 'fastify';
-import fastifyWebsocket from '@fastify/websocket';
-import ffmpeg from 'fluent-ffmpeg';
-import ffmpegPath from 'ffmpeg-static';
+import Fastify from "fastify";
+import WebSocket from "ws";
+import ffmpeg from "fluent-ffmpeg";
+import ffmpegPath from "ffmpeg-static";
 
-// Thiết lập đường dẫn cho FFmpeg
+// Cấu hình FFmpeg path
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const fastify = Fastify({ logger: true });
+const VPS = "ws://45.76.152.73:4000";
+const RECONNECT_INTERVAL = 10000; // 10 giây
 
-// Đăng ký plugin WebSocket của Fastify
-await fastify.register(fastifyWebsocket);
-
-// Quản lý trạng thái luồng toàn cục cho từng connection (nếu cần mở rộng)
 let ffmpegProcess = null;
-let streamReadable = null;
+let ws = null;
+let reconnectTimer = null;
 
-// Khởi tạo router WebSocket
-fastify.get('/stream', { websocket: true }, (connection, req) => {
-    const { socket } = connection;
-    fastify.log.info('Client connected via WebSocket');
+// Hàm khởi chạy và quản lý kết nối WebSocket
+function connectWebSocket() {
+    console.log(`Đang cố gắng kết nối tới VPS: ${VPS}...`);
+    ws = new WebSocket(VPS);
 
-    // Phản hồi nhận diện nguồn giống như code cũ của bạn nếu cần
-    socket.send(JSON.stringify({ type: 'source_acknowledged' }));
+    ws.on("open", () => {
+        console.log("Connected VPS thành công!");
 
-    // Lắng nghe các command từ client gửi lên
-    socket.on('message', (message) => {
+        // Xóa timer reconnect nếu kết nối thành công
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+
+        ws.send(
+            JSON.stringify({
+                type: "source",
+            })
+        );
+    });
+
+    ws.on("message", (msg) => {
         try {
-            const data = JSON.parse(message.toString());
-
-            if (data.cmd === 'start') {
-                startStream(socket);
+            const data = JSON.parse(msg);
+            if (data.cmd === "start") {
+                startStream();
             }
-            if (data.cmd === 'stop') {
+            if (data.cmd === "stop") {
                 stopStream();
             }
         } catch (err) {
-            fastify.log.error('Dữ liệu nhận vào không đúng định dạng JSON:', err.message);
+            console.error("Lỗi parse message từ VPS:", err);
         }
     });
 
-    // Tự động dọn dẹp khi client ngắt kết nối đột ngột
-    socket.on('close', () => {
-        fastify.log.info('Client disconnected');
-        stopStream();
+    ws.on("close", () => {
+        console.log(`Mất kết nối tới VPS. Sẽ thử kết nối lại sau ${RECONNECT_INTERVAL / 1000} giây...`);
+        cleanUpStream();
+        triggerReconnect();
     });
 
-    socket.on('error', (err) => {
-        fastify.log.error('Socket error:', err);
-        stopStream();
+    ws.on("error", (err) => {
+        console.error("Lỗi WebSocket:", err.message);
+        // Event 'close' sẽ tự động được gọi sau 'error', nhưng bọc ở đây để chắc chắn
+        ws.close();
     });
-});
+}
 
-// Hàm khởi chạy luồng stream chống nháy hình (hãm tốc độ bằng -re)
-function startStream(socket) {
-    if (ffmpegProcess) {
-        fastify.log.warn('Stream đang chạy rồi!');
-        return;
+// Hàm kích hoạt kết nối lại (tránh trùng lặp timer)
+function triggerReconnect() {
+    if (!reconnectTimer) {
+        reconnectTimer = setTimeout(() => {
+            reconnectTimer = null;
+            connectWebSocket();
+        }, RECONNECT_INTERVAL);
     }
+}
 
-    fastify.log.info('Start RTSP to WebSocket Stream');
+function startStream() {
+    if (ffmpegProcess) return;
+    console.log("Start RTSP");
+
     ffmpegProcess = ffmpeg(
         "rtsp://admin:123456aA%40@192.168.5.61:554/rtsp/streaming?channel=01&subtype=2"
     )
         .inputOptions([
             "-rtsp_transport tcp",
-            "-reorder_queue_size 4000",
-            "-max_delay 500000"
+            "-fflags nobuffer",
+            "-flags low_delay"
         ])
         .videoCodec("mpeg1video")
-        .videoBitrate("1200k")
+        .videoBitrate("1500k")
         .outputOptions([
-            "-re",               // Hãm tốc độ gửi gói tin theo đúng thời gian thực, triệt tiêu nháy hình
             "-bf 0",
-            "-g 50",
-            "-preset medium",
-            "-bufsize 2000k",
-            "-maxrate 1500k"
+            "-g 30",
+            "-preset ultrafast",
+            "-tune zerolatency"
         ])
         .format("mpegts")
         .fps(25)
         .on("start", (cmd) => {
-            fastify.log.info(`FFmpeg bắt đầu với lệnh: ${cmd}`);
+            console.log("FFmpeg started with cmd:", cmd);
         })
         .on("error", (err) => {
-            fastify.log.error(`FFmpeg gặp lỗi: ${err.message}`);
-            stopStream();
+            console.error("FFmpeg error:", err);
+            cleanUpStream();
         })
         .on("end", () => {
-            fastify.log.info("FFmpeg kết thúc luồng");
-            stopStream();
+            console.log("FFmpeg ended");
+            cleanUpStream();
         });
 
-    streamReadable = ffmpegProcess.pipe();
+    const stream = ffmpegProcess.pipe(null, { end: false });
 
-    streamReadable.on("data", (chunk) => {
-        // Kiểm tra xem socket còn hoạt động tốt không
-        if (!socket || socket.readyState !== 1) { // 1 tương đương với WebSocket.OPEN
-            stopStream();
-            return;
+    stream.on("data", (chunk) => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            // Chống nghẽn mạch bộ nhớ đệm (backpressure)
+            if (ws.bufferedAmount > 1024 * 1024) {
+                return;
+            }
+
+            ws.send(chunk, { binary: true }, (err) => {
+                if (err) console.error("WS Send Error:", err);
+            });
         }
-
-        // Chống quá tải bộ nhớ đệm (Backpressure)
-        if (socket.bufferedAmount > 1024 * 1024) {
-            return;
-        }
-
-        // Gửi dữ liệu nhị phân nguyên bản (MPEG-TS)
-        socket.send(chunk, { binary: true }, (err) => {
-            if (err) fastify.log.error(`Lỗi gửi dữ liệu WS: ${err.message}`);
-        });
     });
 
-    streamReadable.once("data", (chunk) => {
-        fastify.log.info(`First chunk hex: ${chunk.slice(0, 16).toString("hex")}`);
+    stream.once("data", (chunk) => {
+        console.log("First chunk hex:", chunk.slice(0, 32).toString("hex"));
     });
 }
 
-// Hàm dừng và giải phóng luồng triệt để
-function stopStream() {
-    fastify.log.info('Hủy bỏ luồng phát...');
-
-    if (streamReadable) {
-        streamReadable.removeAllListeners("data");
-        streamReadable.unpipe();
-        streamReadable = null;
-    }
-
+function cleanUpStream() {
     if (ffmpegProcess) {
-        ffmpegProcess.removeAllListeners();
         try {
             ffmpegProcess.kill("SIGKILL");
-        } catch (e) {
-            // Tiến trình có thể đã chết trước đó
-        }
+        } catch (e) { }
         ffmpegProcess = null;
     }
 }
 
-// Khởi chạy Fastify Server
+function stopStream() {
+    if (!ffmpegProcess) return;
+    console.log("Stop RTSP");
+    ffmpegProcess.kill("SIGKILL");
+    ffmpegProcess = null;
+}
+
+// Khởi tạo và chạy Fastify Server
 export const startServer = async () => {
     try {
-        console.log('------startServer--------')
-        const port = 4000;
-        await fastify.listen({ port: port, host: '0.0.0.0' });
-        fastify.log.info(`Server đang chạy tại: ws://localhost:${port}/stream`);
+        // Route cơ bản kiểm tra server chạy hay chưa
+        fastify.get("/", async (request, reply) => {
+            return { status: "Server running", vps_connected: ws?.readyState === WebSocket.OPEN };
+        });
+
+        // Lắng nghe cổng 3000 (hoặc cổng bạn muốn)
+        await fastify.listen({ port: 3000, host: "0.0.0.0" });
+        console.log("Fastify server đang chạy tại port 3000");
+
+        // Bắt đầu kích hoạt kết nối WebSocket sau khi server khởi động
+        connectWebSocket();
+
     } catch (err) {
         fastify.log.error(err);
         process.exit(1);
