@@ -305,6 +305,7 @@ export function getStreamStatus(cameraId = 1) {
     };
   }
 
+  // const liveUrl = `/cameras/${cameraId}/stream/live.ts`;
   const wsUrl = `/cameras/${cameraId}/stream/ws`;
   return {
     streaming,

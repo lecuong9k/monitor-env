@@ -5,9 +5,8 @@ import sensible from "@fastify/sensible";
 
 const DEFAULT_CORS_ORIGINS = [
   "http://localhost:5173",
-  "http://127.0.0.1:5173",
   "http://localhost:3000",
-  "http://127.0.0.1:3000",
+  "http://192.168.5.97:3000",
 ];
 
 function parseCorsOrigins() {
@@ -38,6 +37,8 @@ export async function registerSecurity(fastify) {
     global: true,
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,
+    // HTTP (IP:port) không phải trustworthy origin — tắt COOP để tránh cảnh báo console.
+    crossOriginOpenerPolicy: false,
   });
 
   await fastify.register(rateLimit, {
@@ -56,8 +57,11 @@ export async function registerSecurity(fastify) {
   const serverPort = String(Number(process.env.PORT) || 3000);
 
   await fastify.register(cors, {
-    origin: true,
-    methods: ["GET", "POST", "DELETE", "PUT", "PATCH", "OPTIONS"],
+    origin: (origin, cb) => {
+      const allowed = !origin || isOriginAllowed(origin, corsOrigins);
+      cb(allowed ? null : new Error("Origin not allowed"), allowed);
+    },
+    methods: ["GET", "POST", "DELETE", "PUT", "PATCH"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
     maxAge: 86_400,
