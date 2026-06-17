@@ -12,6 +12,7 @@ import {
   stopCameraStream,
   updateCameraRecord,
   updateCameraStreamQuality,
+  ensureMpegtsRelayStream,
 } from "../services/camera.service.js";
 import {
   addWsClient,
@@ -88,6 +89,9 @@ export async function liveMpegTsController(request, reply) {
 export async function startCameraStreamController(request, reply) {
   try {
     const clientContext = clientContextFromRequest(request);
+    if (request.headers["x-edge-relay"] === "mbox") {
+      return await ensureMpegtsRelayStream(Number(request.params.id));
+    }
     return await startCameraStream(Number(request.params.id), clientContext);
   } catch (err) {
     request.log.error(err);

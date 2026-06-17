@@ -39,6 +39,9 @@ export async function liveMpegTsController(request, reply) {
 
 export async function startCameraStreamController(request, reply) {
   try {
+    if (request.headers["x-edge-relay"] === "mbox") {
+      request.headers["x-edge-relay"] = "mbox";
+    }
     return await cameraClient.startCameraStream(request.params.id, request);
   } catch (err) {
     request.log.error(err);
