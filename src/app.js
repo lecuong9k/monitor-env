@@ -10,20 +10,17 @@ import recipeRoutes from "./routes/recipe.routes.js";
 import wsRoutes from "./routes/ws.routes.js";
 import cameraRoutes from "./routes/camera.routes.js";
 import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
-import {
-  initStreamService,
-  stopAllStreams,
-} from "./services/stream.service.js";
-import { config as cameraConfig } from "./config/camera.config.js";
+import { checkCameraServiceHealth } from "./services/camera-client.service.js";
 
 import { registerSecurity } from "./plugins/security.js";
 import { registerWebsocket } from "./plugins/websocket.js";
-import { startServer } from "./jobs/camera/agent.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const beRoot = path.join(__dirname, "..");
 const BODY_LIMIT = Number(process.env.BODY_LIMIT_BYTES) || 1024 * 64;
 const REQUEST_TIMEOUT = Number(process.env.REQUEST_TIMEOUT_MS) || 30_000;
+const CAMERA_SERVICE_URL =
+  process.env.CAMERA_SERVICE_URL?.trim() || "http://127.0.0.1:4001";
 
 /** Luôn resolve STATIC_DIR theo thư mục BE, không phụ thuộc cwd khi chạy npm. */
 function resolveStaticDir() {
@@ -56,17 +53,33 @@ fastify.register(recipeRoutes);
 await fastify.register(wsRoutes);
 await fastify.register(cameraRoutes);
 
-if (cameraConfig.streamMode === "hls") {
-  await fastify.register(fastifyStatic, {
-    root: cameraConfig.hlsOutputDir,
-    prefix: "/streams/",
-    decorateReply: false,
+if (process.env.STREAM_MODE === "hls") {
+  fastify.get("/streams/*", async (request, reply) => {
+    const target = `${CAMERA_SERVICE_URL}${request.url}`;
+    const res = await fetch(target, {
+      headers: {
+        "X-Camera-Service-Key":
+          process.env.CAMERA_SERVICE_API_KEY?.trim() || "",
+      },
+    });
+
+    reply.code(res.status);
+    res.headers.forEach((value, key) => {
+      if (key.toLowerCase() !== "transfer-encoding") {
+        reply.header(key, value);
+      }
+    });
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    return reply.send(buffer);
   });
 }
 
 fastify.get("/health", async () => {
+  const cameraService = await checkCameraServiceHealth();
   return {
-    status: "ok",
+    status: cameraService ? "ok" : "degraded",
+    camera_service: cameraService ? "up" : "down",
   };
 });
 
@@ -141,12 +154,12 @@ if (hasFeDist) {
 
 const start = async () => {
   try {
-    await initStreamService().catch((err) => {
+    const cameraOk = await checkCameraServiceHealth();
+    if (!cameraOk) {
       fastify.log.warn(
-        { err },
-        "Camera stream chưa sẵn sàng — kiểm tra CAMERA_* trong .env",
+        "Camera service chưa sẵn sàng — chạy: npm run camera-service",
       );
-    });
+    }
 
     await fastify.listen({
       port: Number(process.env.PORT) || 3000,
@@ -166,10 +179,8 @@ const start = async () => {
 
 start();
 startModbusWorkers();
-// Camera -> Server
-startServer()
+
 const shutdown = () => {
-  stopAllStreams();
   process.exit(0);
 };
 

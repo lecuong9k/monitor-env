@@ -15,6 +15,20 @@ module.exports = {
       },
     },
     {
+      name: "camera-service",
+      script: "npm",
+      args: "run camera-service",
+      cwd: __dirname,
+      exec_mode: "fork",
+      autorestart: true,
+      max_restarts: 20,
+      restart_delay: 2000,
+      watch: false,
+      env: {
+        NODE_ENV: "production",
+      },
+    },
+    {
       name: "monitor-env",
       script: "npm",
       args: "run start",
