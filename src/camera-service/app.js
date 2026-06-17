@@ -4,7 +4,6 @@ import { registerWebsocket } from "../plugins/websocket.js";
 import cameraRoutes from "./routes/camera.routes.js";
 import { registerInternalAuth } from "./middleware/internal-auth.js";
 import { config } from "./config.js";
-import { seedCamerasFromEnv } from "./seed.js";
 import {
   getHlsOutputDir,
   initStreamService,
@@ -36,8 +35,6 @@ fastify.get("/health", async () => ({
   status: "ok",
   service: "camera-service",
 }));
-
-seedCamerasFromEnv();
 
 const start = async () => {
   try {

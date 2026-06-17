@@ -348,7 +348,7 @@ function getStreamQualityState(state) {
   };
 }
 
-export function getStreamStatus(cameraId) {
+export function getStreamStatus(cameraId, clientContext) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
@@ -359,13 +359,13 @@ export function getStreamStatus(cameraId) {
   const qualityState = getStreamQualityState(state);
 
   if (config.streamMode === "webrtc") {
-    const whepUrl = getWhepUrl(camera.mediamtx_path);
+    const whepUrl = getWhepUrl(camera.mediamtx_path, clientContext);
     return {
       streaming,
       mode: "webrtc",
       rtsp_configured: Boolean(state.currentRtspUrl),
       stream_type: "webrtc",
-      stream_url: getWebRtcPageUrl(camera.mediamtx_path),
+      stream_url: getWebRtcPageUrl(camera.mediamtx_path, clientContext),
       whep_url: streaming ? whepUrl : null,
       mediamtx_path: camera.mediamtx_path,
       ...qualityState,
@@ -404,7 +404,7 @@ async function startWebRtcStream(camera, source) {
   await waitPathOnline(camera.mediamtx_path);
 }
 
-export async function startCameraStream(cameraId) {
+export async function startCameraStream(cameraId, clientContext) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
@@ -412,7 +412,11 @@ export async function startCameraStream(cameraId) {
 
   const state = getOrCreateState(cameraId);
   if (isStreaming(state)) {
-    return { ok: true, alreadyRunning: true, ...getStreamStatus(cameraId) };
+    return {
+      ok: true,
+      alreadyRunning: true,
+      ...getStreamStatus(cameraId, clientContext),
+    };
   }
 
   const quality = getStreamQualityPreset(state.qualityId);
@@ -440,7 +444,11 @@ export async function startCameraStream(cameraId) {
     }
   }
 
-  return { ok: true, alreadyRunning: false, ...getStreamStatus(cameraId) };
+  return {
+    ok: true,
+    alreadyRunning: false,
+    ...getStreamStatus(cameraId, clientContext),
+  };
 }
 
 export async function stopCameraStream(cameraId) {
@@ -483,9 +491,9 @@ export async function stopCameraStream(cameraId) {
   });
 }
 
-export async function restartCameraStream(cameraId) {
+export async function restartCameraStream(cameraId, clientContext) {
   await stopCameraStream(cameraId);
-  return startCameraStream(cameraId);
+  return startCameraStream(cameraId, clientContext);
 }
 
 export async function setStreamQuality(cameraId, qualityId) {
@@ -557,8 +565,8 @@ export function getStreamQualityForCamera(cameraId) {
   return getStreamQualityState(state);
 }
 
-export function getStreamInfo(cameraId) {
-  return getStreamStatus(cameraId);
+export function getStreamInfo(cameraId, clientContext) {
+  return getStreamStatus(cameraId, clientContext);
 }
 
 export function stopAllStreams() {

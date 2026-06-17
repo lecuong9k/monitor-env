@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { resolveWebrtcBaseUrl } from "../utils/webrtc-client-url.js";
 
 function apiBase() {
   return config.mediamtx.apiUrl.replace(/\/$/, "");
@@ -26,13 +27,15 @@ async function mtxFetch(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-export function getWhepUrl(pathName) {
-  const base = config.mediamtx.webrtcPublicUrl.replace(/\/$/, "");
+/** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
+export function getWhepUrl(pathName, clientContext) {
+  const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");
   return `${base}/${pathName}/whep`;
 }
 
-export function getWebRtcPageUrl(pathName) {
-  const base = config.mediamtx.webrtcPublicUrl.replace(/\/$/, "");
+/** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
+export function getWebRtcPageUrl(pathName, clientContext) {
+  const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");
   return `${base}/${pathName}`;
 }
 

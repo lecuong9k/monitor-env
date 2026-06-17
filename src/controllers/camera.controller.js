@@ -2,7 +2,7 @@ import * as cameraClient from "../services/camera-client.service.js";
 
 export async function listCamerasController(request, reply) {
   try {
-    return await cameraClient.listCameras();
+    return await cameraClient.listCameras(request);
   } catch (err) {
     request.log.error(err);
     const status = err.status === 401 ? 503 : 500;
@@ -14,7 +14,7 @@ export async function listCamerasController(request, reply) {
 
 export async function getCameraStreamUrlController(request, reply) {
   try {
-    return await cameraClient.getCameraStreamUrl(request.params.id);
+    return await cameraClient.getCameraStreamUrl(request.params.id, request);
   } catch (err) {
     return reply
       .code(err.status === 404 ? 404 : 500)
@@ -39,7 +39,7 @@ export async function liveMpegTsController(request, reply) {
 
 export async function startCameraStreamController(request, reply) {
   try {
-    return await cameraClient.startCameraStream(request.params.id);
+    return await cameraClient.startCameraStream(request.params.id, request);
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -57,7 +57,7 @@ export async function stopCameraStreamController(request, reply) {
 
 export async function restartCameraStreamController(request, reply) {
   try {
-    return await cameraClient.restartCameraStream(request.params.id);
+    return await cameraClient.restartCameraStream(request.params.id, request);
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -106,7 +106,7 @@ export async function ptzController(request, reply) {
 
 export async function streamStatusController(request, reply) {
   try {
-    return await cameraClient.getStreamStatus(request.params.id);
+    return await cameraClient.getStreamStatus(request.params.id, request);
   } catch (err) {
     return reply
       .code(err.status === 404 ? 404 : 500)
