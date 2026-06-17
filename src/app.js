@@ -11,6 +11,7 @@ import wsRoutes from "./routes/ws.routes.js";
 import cameraRoutes from "./routes/camera.routes.js";
 import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
 import { checkCameraServiceHealth } from "./services/camera-client.service.js";
+import { startEdgeAgent } from "./edge/agent.js";
 
 import { registerSecurity } from "./plugins/security.js";
 import { registerWebsocket } from "./plugins/websocket.js";
@@ -166,6 +167,7 @@ const start = async () => {
       host: process.env.HOST || "0.0.0.0",
     });
     console.log("Server started");
+    startEdgeAgent();
     if (hasFeDist) {
       console.log(
         `Web UI: http://<device-ip>:${Number(process.env.PORT) || 3000}/#/camera`,

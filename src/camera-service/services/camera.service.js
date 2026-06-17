@@ -21,6 +21,7 @@ import {
   setStreamQuality,
   startCameraStream,
   stopCameraStream,
+  ensureMpegtsRelayStream,
 } from "./stream.service.js";
 
 export async function listCameras(clientContext) {
@@ -60,7 +61,12 @@ export function getCameraStreamOptions(cameraId) {
   return getStreamQualityForCamera(cameraId);
 }
 
-export { startCameraStream, stopCameraStream, restartCameraStream };
+export {
+  startCameraStream,
+  stopCameraStream,
+  restartCameraStream,
+  ensureMpegtsRelayStream,
+};
 
 export async function updateCameraStreamQuality(cameraId, qualityId) {
   return setStreamQuality(cameraId, qualityId);
