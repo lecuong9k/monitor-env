@@ -1,4 +1,4 @@
-import { config } from "../config/camera.config.js";
+import { config } from "../config.js";
 
 function apiBase() {
   return config.mediamtx.apiUrl.replace(/\/$/, "");
@@ -26,12 +26,12 @@ async function mtxFetch(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-export function getWhepUrl(pathName = config.mediamtx.path) {
+export function getWhepUrl(pathName) {
   const base = config.mediamtx.webrtcPublicUrl.replace(/\/$/, "");
   return `${base}/${pathName}/whep`;
 }
 
-export function getWebRtcPageUrl(pathName = config.mediamtx.path) {
+export function getWebRtcPageUrl(pathName) {
   const base = config.mediamtx.webrtcPublicUrl.replace(/\/$/, "");
   return `${base}/${pathName}`;
 }
