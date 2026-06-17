@@ -23,12 +23,12 @@ import {
   stopCameraStream,
 } from "./stream.service.js";
 
-export async function listCameras() {
+export async function listCameras(clientContext) {
   const cameras = findAllCameras();
   return cameras.map((camera) => {
     let stream;
     try {
-      stream = getStreamInfo(camera.id);
+      stream = getStreamInfo(camera.id, clientContext);
     } catch {
       stream = { stream_type: config.streamMode };
     }
@@ -52,8 +52,8 @@ export function listCamerasRegistry() {
   return findAllCameras().map((row) => toAdminCamera(row));
 }
 
-export function getCameraStreamUrl(cameraId) {
-  return getStreamInfo(cameraId);
+export function getCameraStreamUrl(cameraId, clientContext) {
+  return getStreamInfo(cameraId, clientContext);
 }
 
 export function getCameraStreamOptions(cameraId) {
