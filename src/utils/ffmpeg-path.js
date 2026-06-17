@@ -1,10 +1,8 @@
 import { accessSync, constants } from "node:fs";
 import { execSync } from "node:child_process";
 import ffmpegStatic from "ffmpeg-static";
-import { config } from "../config/camera.config.js";
 
 const CANDIDATES = [
-  config.ffmpegPath,
   process.env.FFMPEG_PATH,
   ffmpegStatic,
   "/opt/homebrew/bin/ffmpeg",

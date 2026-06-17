@@ -1,23 +1,21 @@
 import {
   cameraStreamWsController,
+  createCameraController,
+  deleteCameraController,
+  getCameraController,
   getCameraStreamOptionsController,
   getCameraStreamUrlController,
   listCamerasController,
+  listCamerasRegistryController,
   liveMpegTsController,
   ptzController,
   restartCameraStreamController,
   startCameraStreamController,
   stopCameraStreamController,
   streamStatusController,
+  updateCameraController,
   updateCameraStreamQualityController,
 } from "../controllers/camera.controller.js";
-import {
-  createCameraController,
-  deleteCameraController,
-  getCameraController,
-  listCamerasRegistryController,
-  updateCameraController,
-} from "../controllers/camera-admin.controller.js";
 
 export default async function cameraRoutes(fastify) {
   fastify.get("/cameras", listCamerasController);
@@ -26,6 +24,7 @@ export default async function cameraRoutes(fastify) {
   fastify.get("/cameras/:id", getCameraController);
   fastify.put("/cameras/:id", updateCameraController);
   fastify.delete("/cameras/:id", deleteCameraController);
+
   fastify.get("/cameras/:id/stream-url", getCameraStreamUrlController);
   fastify.get("/cameras/:id/stream/options", getCameraStreamOptionsController);
   fastify.get("/cameras/:id/stream/status", streamStatusController);
