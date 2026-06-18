@@ -556,6 +556,53 @@ export async function attachMpegTsClient(cameraId, reply, request) {
   });
 }
 
+export async function ensureMpegtsRelayStream(cameraId) {
+  const camera = findCameraById(cameraId);
+  if (!camera) {
+    throw new Error("Không tìm thấy camera");
+  }
+
+  const state = getOrCreateState(cameraId);
+  const wsUrl = `/cameras/${cameraId}/stream/ws`;
+
+  if (state.outputStream && state.ffmpegProcess) {
+    return {
+      ok: true,
+      streaming: true,
+      stream_type: "mpegts",
+      ws_url: wsUrl,
+      stream_url: wsUrl,
+      relay: true,
+    };
+  }
+
+  const quality = getStreamQualityPreset("mobile");
+  state.qualityId = "mobile";
+  const source =
+    state.currentRtspUrl || (await resolveRtspUrl(cameraId, quality.subtype));
+  if (!source) {
+    throw new Error("Không tìm thấy RTSP URL cho camera");
+  }
+
+  state.currentRtspUrl = source;
+  if (!ffmpegPath) {
+    throw new Error(`Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`);
+  }
+
+  await startMpegtsStream(state, cameraId, source, quality);
+
+  return {
+    ok: true,
+    streaming: true,
+    stream_type: "mpegts",
+    ws_url: wsUrl,
+    stream_url: wsUrl,
+    relay: true,
+    quality: quality.id,
+    label: quality.label,
+  };
+}
+
 export function getStreamQualityForCamera(cameraId) {
   const camera = findCameraById(cameraId);
   if (!camera) {

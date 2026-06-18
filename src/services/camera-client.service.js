@@ -111,11 +111,13 @@ export async function getStreamStatus(cameraId, request) {
 }
 
 export async function startCameraStream(cameraId, request) {
+  const relay = request?.headers?.["x-edge-relay"] === "mbox";
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/start`,
     {
       method: "POST",
       body: "{}",
+      headers: relay ? { "X-Edge-Relay": "mbox" } : {},
     },
     request,
   );
@@ -238,6 +240,10 @@ export function proxyCameraWebSocket(clientSocket, cameraId) {
 }
 
 export async function checkCameraServiceHealth() {
-  const res = await fetch(`${BASE_URL.replace(/\/$/, "")}/health`);
-  return res.ok;
+  try {
+    const res = await fetch(`${BASE_URL.replace(/\/$/, "")}/health`);
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
