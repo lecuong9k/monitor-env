@@ -26,10 +26,8 @@ import {
   ensurePathSource,
   getWebRtcPageUrl,
   getWhepUrl,
-  isMediamtxAvailable,
-  waitPathOnline,
 } from "./mediamtx.service.js";
-import { isLocalClient } from "../utils/local-client.js";
+import { resolvePublicWsBaseUrl } from "../utils/public-ws-url.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 
 /**
@@ -348,8 +346,13 @@ function mpegtsWsUrl(cameraId) {
   return `/cameras/${cameraId}/stream/ws`;
 }
 
-function canUseLocalFallback(clientContext) {
-  return config.mediamtxLocalFallback && isLocalClient(clientContext);
+function resolveMpegtsPlayUrl(cameraId, clientContext) {
+  const wsPath = mpegtsWsUrl(cameraId);
+  const publicBase = resolvePublicWsBaseUrl(clientContext)?.replace(/\/$/, "");
+  if (publicBase) {
+    return `${publicBase}${wsPath}`;
+  }
+  return wsPath;
 }
 
 async function startLocalMpegtsFallback(state, cameraId, source, quality) {
@@ -384,7 +387,7 @@ export function getStreamStatus(cameraId, clientContext) {
   const qualityState = getStreamQualityState(state);
 
   if (state.localFallback) {
-    const wsUrl = mpegtsWsUrl(cameraId);
+    const wsUrl = resolveMpegtsPlayUrl(cameraId, clientContext);
     return {
       streaming,
       mode: "mpegts",
@@ -392,7 +395,7 @@ export function getStreamStatus(cameraId, clientContext) {
       transcode: state.transcodeMode,
       stream_type: "mpegts",
       stream_url: wsUrl,
-      ws_url: streaming ? wsUrl : null,
+      ws_url: wsUrl,
       fallback: true,
       mediamtx_available: false,
       ...qualityState,
@@ -401,14 +404,16 @@ export function getStreamStatus(cameraId, clientContext) {
 
   if (config.streamMode === "webrtc") {
     const whepUrl = getWhepUrl(camera.mediamtx_path, clientContext);
+    const rtspConfigured = Boolean(state.currentRtspUrl);
     return {
       streaming,
       mode: "webrtc",
-      rtsp_configured: Boolean(state.currentRtspUrl),
+      rtsp_configured: rtspConfigured,
       stream_type: "webrtc",
       stream_url: getWebRtcPageUrl(camera.mediamtx_path, clientContext),
-      whep_url: streaming ? whepUrl : null,
+      whep_url: rtspConfigured ? whepUrl : null,
       mediamtx_path: camera.mediamtx_path,
+      mtx_registered: state.mtxActive,
       fallback: false,
       ...qualityState,
     };
@@ -441,11 +446,6 @@ export function getStreamStatus(cameraId, clientContext) {
   };
 }
 
-async function startWebRtcStream(camera, source) {
-  await ensurePathSource(camera.mediamtx_path, source);
-  await waitPathOnline(camera.mediamtx_path);
-}
-
 export async function startCameraStream(cameraId, clientContext) {
   const camera = findCameraById(cameraId);
   if (!camera) {
@@ -453,7 +453,11 @@ export async function startCameraStream(cameraId, clientContext) {
   }
 
   const state = getOrCreateState(cameraId);
-  if (isStreaming(state)) {
+
+  // Start mới: luôn thử MediaMTX trung tâm trước, không giữ fallback cũ
+  if (state.localFallback && config.streamMode === "webrtc") {
+    await stopCameraStream(cameraId);
+  } else if (isStreaming(state)) {
     return {
       ok: true,
       alreadyRunning: true,
@@ -470,24 +474,16 @@ export async function startCameraStream(cameraId, clientContext) {
   state.currentRtspUrl = source;
 
   if (config.streamMode === "webrtc") {
-    const useFallback = canUseLocalFallback(clientContext);
-    const mtxAvailable = useFallback ? await isMediamtxAvailable() : true;
-
-    if (useFallback && !mtxAvailable) {
-      await startLocalMpegtsFallback(state, cameraId, source, quality);
-    } else {
-      try {
-        await startWebRtcStream(camera, source);
-        state.mtxActive = true;
-        state.localFallback = false;
-      } catch (err) {
-        if (!useFallback) throw err;
-        console.warn(
-          `[stream:${cameraId}] WebRTC failed — chuyển relay local:`,
-          err.message,
-        );
-        await startLocalMpegtsFallback(state, cameraId, source, quality);
-      }
+    state.localFallback = false;
+    try {
+      await ensurePathSource(camera.mediamtx_path, source);
+      state.mtxActive = true;
+    } catch (err) {
+      console.warn(
+        `[stream] MediaMTX path register failed for camera ${cameraId}:`,
+        err instanceof Error ? err.message : err,
+      );
+      state.mtxActive = false;
     }
   } else {
     if (!ffmpegPath) {
@@ -508,6 +504,22 @@ export async function startCameraStream(cameraId, clientContext) {
     alreadyRunning: false,
     ...getStreamStatus(cameraId, clientContext),
   };
+}
+
+async function activateLocalMpegtsFallback(
+  state,
+  camera,
+  cameraId,
+  source,
+  quality,
+) {
+  try {
+    await clearPathSource(camera.mediamtx_path);
+  } catch {
+    /* path có thể chưa tồn tại */
+  }
+  state.mtxActive = false;
+  await startLocalMpegtsFallback(state, cameraId, source, quality);
 }
 
 export async function stopCameraStream(cameraId) {
@@ -578,6 +590,44 @@ export async function stopCameraStream(cameraId) {
 export async function restartCameraStream(cameraId, clientContext) {
   await stopCameraStream(cameraId);
   return startCameraStream(cameraId, clientContext);
+}
+
+/** Ép relay MPEG-TS local (backup khi MediaMTX trung tâm không phát được). */
+export async function forceCameraStreamFallback(cameraId, clientContext) {
+  const camera = findCameraById(cameraId);
+  if (!camera) {
+    throw new Error("Không tìm thấy camera");
+  }
+
+  const state = getOrCreateState(cameraId);
+  const quality = getStreamQualityPreset(state.qualityId);
+  const source =
+    state.currentRtspUrl || (await resolveRtspUrl(cameraId, quality.subtype));
+  if (!source) {
+    throw new Error("Không tìm thấy RTSP URL cho camera");
+  }
+
+  state.currentRtspUrl = source;
+
+  if (state.localFallback && state.ffmpegProcess) {
+    return {
+      ok: true,
+      alreadyRunning: true,
+      ...getStreamStatus(cameraId, clientContext),
+    };
+  }
+
+  if (state.mtxActive || state.ffmpegProcess) {
+    await stopCameraStream(cameraId);
+  }
+
+  await activateLocalMpegtsFallback(state, camera, cameraId, source, quality);
+
+  return {
+    ok: true,
+    alreadyRunning: false,
+    ...getStreamStatus(cameraId, clientContext),
+  };
 }
 
 export async function setStreamQuality(cameraId, qualityId, clientContext) {
@@ -711,7 +761,14 @@ export function stopAllStreams() {
 
 export async function initStreamService() {
   if (config.streamMode === "webrtc") {
-    await checkMediamtxAvailable();
+    try {
+      await checkMediamtxAvailable();
+    } catch (err) {
+      console.warn(
+        "[stream] MediaMTX API unavailable at startup:",
+        err instanceof Error ? err.message : err,
+      );
+    }
     return;
   }
   ensureHlsRoot();

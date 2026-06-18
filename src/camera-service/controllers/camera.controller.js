@@ -13,6 +13,7 @@ import {
   updateCameraRecord,
   updateCameraStreamQuality,
   ensureMpegtsRelayStream,
+  forceCameraStreamFallback,
 } from "../services/camera.service.js";
 import {
   addWsClient,
@@ -112,6 +113,19 @@ export async function restartCameraStreamController(request, reply) {
   try {
     const clientContext = clientContextFromRequest(request);
     return await restartCameraStream(Number(request.params.id), clientContext);
+  } catch (err) {
+    request.log.error(err);
+    return reply.code(500).send({ error: err.message });
+  }
+}
+
+export async function forceCameraStreamFallbackController(request, reply) {
+  try {
+    const clientContext = clientContextFromRequest(request);
+    return await forceCameraStreamFallback(
+      Number(request.params.id),
+      clientContext,
+    );
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });

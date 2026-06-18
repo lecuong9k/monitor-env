@@ -15,6 +15,7 @@ import {
   streamStatusController,
   updateCameraController,
   updateCameraStreamQualityController,
+  forceCameraStreamFallbackController,
 } from "../controllers/camera.controller.js";
 
 export default async function cameraRoutes(fastify) {
@@ -31,6 +32,10 @@ export default async function cameraRoutes(fastify) {
   fastify.post("/cameras/:id/stream/start", startCameraStreamController);
   fastify.post("/cameras/:id/stream/stop", stopCameraStreamController);
   fastify.post("/cameras/:id/stream/restart", restartCameraStreamController);
+  fastify.post(
+    "/cameras/:id/stream/fallback",
+    forceCameraStreamFallbackController,
+  );
   fastify.post(
     "/cameras/:id/stream/quality",
     updateCameraStreamQualityController,
