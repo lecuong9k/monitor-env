@@ -43,6 +43,31 @@ export async function checkMediamtxAvailable() {
   await mtxFetch("/v3/config/global/get");
 }
 
+let healthCache = { available: null, checkedAt: 0 };
+
+/** @param {{ force?: boolean }} [options] */
+export async function isMediamtxAvailable(options = {}) {
+  const ttl = config.mediamtxHealthCacheMs;
+  const now = Date.now();
+
+  if (
+    !options.force &&
+    healthCache.available !== null &&
+    now - healthCache.checkedAt < ttl
+  ) {
+    return healthCache.available;
+  }
+
+  try {
+    await checkMediamtxAvailable();
+    healthCache = { available: true, checkedAt: now };
+    return true;
+  } catch {
+    healthCache = { available: false, checkedAt: now };
+    return false;
+  }
+}
+
 export async function ensurePathSource(pathName, rtspUrl) {
   const body = {
     source: rtspUrl,

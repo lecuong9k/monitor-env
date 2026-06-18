@@ -3,17 +3,33 @@ import crypto from "node:crypto";
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12;
 
+function normalizeSecretsKey(raw) {
+  if (raw == null || raw === "") return "";
+  return String(raw)
+    .replace(/^\uFEFF/, "")
+    .replace(/\r/g, "")
+    .trim()
+    .replace(/^['"]|['"]$/g, "");
+}
+
 function getKey() {
-  const raw = process.env.CAMERA_SECRETS_KEY?.trim();
+  const raw = normalizeSecretsKey(process.env.CAMERA_SECRETS_KEY);
   if (!raw) {
     throw new Error(
-      "Thiếu CAMERA_SECRETS_KEY (64 ký tự hex = 32 byte) trong .env.local",
+      "Thiếu CAMERA_SECRETS_KEY (64 ký tự hex = 32 byte) trong .env.production",
     );
   }
   if (!/^[0-9a-fA-F]{64}$/.test(raw)) {
-    throw new Error("CAMERA_SECRETS_KEY phải là 64 ký tự hex (32 byte)");
+    throw new Error(
+      `CAMERA_SECRETS_KEY phải là 64 ký tự hex (32 byte); hiện tại: ${raw.length} ký tự`,
+    );
   }
   return Buffer.from(raw, "hex");
+}
+
+/** Gọi lúc khởi động camera-service để fail sớm nếu key sai. */
+export function assertSecretsKeyConfigured() {
+  getKey();
 }
 
 /** @param {string} plaintext */

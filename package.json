@@ -21,6 +21,7 @@
     "camera-service:dev": "sh scripts/camera-service-stop.sh && sleep 1 && NODE_ENV=development node --import ./src/load-env.js --watch src/camera-service/app.js",
     "camera-service:stop": "sh scripts/camera-service-stop.sh",
     "secrets:key": "node -e \"import('./src/utils/secrets.js').then(m=>console.log(m.generateSecretsKey()))\"",
+    "secrets:check": "node --import ./src/load-env.js -e \"import('./src/utils/secrets.js').then(m=>{m.assertSecretsKeyConfigured();console.log('OK: CAMERA_SECRETS_KEY hợp lệ')})\"",
     "copy-fe": "rm -rf dist && cp -R ../monitor-env-fe/dist dist",
     "mediamtx": "sh scripts/mediamtx-stop.sh && sleep 1 && ./mediamtx mediamtx.development.yml",
     "mediamtx:stop": "sh scripts/mediamtx-stop.sh",

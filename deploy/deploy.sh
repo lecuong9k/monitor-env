@@ -73,7 +73,6 @@ check_required_env() {
   local var
 
   for var in \
-    CAMERA_SECRETS_KEY \
     CAMERA_SERVICE_API_KEY \
     EDGE_ID \
     MBOX_EDGE_WS_URL \
@@ -88,10 +87,6 @@ check_required_env() {
 
   if [ "$missing" -eq 1 ]; then
     die "Thiếu biến bắt buộc trong .env.production hoặc .env.local"
-  fi
-
-  if ! printf '%s' "$CAMERA_SECRETS_KEY" | grep -Eq '^[0-9a-fA-F]{64}$'; then
-    die "CAMERA_SECRETS_KEY phải là 64 ký tự hex (npm run secrets:key)"
   fi
 
   if ! printf '%s' "$EDGE_ID" | grep -Eq '^[a-zA-Z0-9._-]{1,64}$'; then
@@ -270,6 +265,9 @@ else
 fi
 
 log "Kiểm tra cấu hình môi trường"
+for env_file in "${APP_DIR}/.env.production" "${APP_DIR}/.env.local"; do
+  [ -f "$env_file" ] && sed -i 's/\r$//' "$env_file" 2>/dev/null || true
+done
 load_env_file "${APP_DIR}/.env.production"
 load_env_file "${APP_DIR}/.env.local"
 check_required_env

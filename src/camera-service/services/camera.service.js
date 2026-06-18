@@ -68,8 +68,12 @@ export {
   ensureMpegtsRelayStream,
 };
 
-export async function updateCameraStreamQuality(cameraId, qualityId) {
-  return setStreamQuality(cameraId, qualityId);
+export async function updateCameraStreamQuality(
+  cameraId,
+  qualityId,
+  clientContext,
+) {
+  return setStreamQuality(cameraId, qualityId, clientContext);
 }
 
 export async function executePtz(cameraId, body) {
