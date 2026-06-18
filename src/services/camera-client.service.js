@@ -14,7 +14,7 @@ function serviceHeaders(extra = {}) {
   };
 }
 
-/** Chuyển Origin/Host từ request FE sang camera-service để chọn URL WHEP đúng. */
+/** Chuyển Origin/Host từ request FE sang camera-service (origin map WHEP nếu có). */
 function clientProxyHeaders(request) {
   if (!request?.headers) return {};
 
@@ -224,12 +224,30 @@ export function proxyCameraWebSocket(clientSocket, cameraId) {
     });
   });
 
+  const isValidCloseCode = (code) =>
+    typeof code === "number" &&
+    ((code >= 1000 &&
+      code <= 1014 &&
+      code !== 1004 &&
+      code !== 1005 &&
+      code !== 1006) ||
+      (code >= 3000 && code <= 4999));
+
   const closeBoth = (code, reason) => {
-    if (clientSocket.readyState === 1) clientSocket.close(code, reason);
-    if (upstream.readyState === WebSocket.OPEN) upstream.close(code, reason);
+    const safeCode = isValidCloseCode(code) ? code : undefined;
+    if (clientSocket.readyState === 1) clientSocket.close(safeCode, reason);
+    if (upstream.readyState === WebSocket.OPEN)
+      upstream.close(safeCode, reason);
   };
 
-  upstream.on("close", (code, reason) => closeBoth(code, reason.toString()));
+  upstream.on("close", (code, reason) => {
+    const reasonStr = reason
+      ? Buffer.isBuffer(reason)
+        ? reason.toString()
+        : String(reason)
+      : undefined;
+    closeBoth(code, reasonStr);
+  });
   upstream.on("error", () => closeBoth(1011, "Upstream error"));
   clientSocket.on("close", () => {
     if (upstream.readyState === WebSocket.OPEN) upstream.close();

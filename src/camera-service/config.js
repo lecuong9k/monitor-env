@@ -40,12 +40,15 @@ export const config = {
         ? "webrtc"
         : "mpegts",
   homePresetToken: process.env.HOME_PRESET_TOKEN || "255",
+  /** Khi MediaMTX trung tâm sập, client local (LAN) relay MPEG-TS qua FFmpeg. */
+  mediamtxLocalFallback: process.env.MEDIAMTX_LOCAL_FALLBACK !== "false",
+  mediamtxHealthCacheMs: Number(process.env.MEDIAMTX_HEALTH_CACHE_MS) || 10_000,
   mediamtx: {
     apiUrl: process.env.MEDIAMTX_API_URL?.trim() || "http://127.0.0.1:9997",
     /** Port WHEP/WebRTC MediaMTX — hostname lấy động từ Origin/Host của client. */
     webrtcPort: Number(process.env.MEDIAMTX_WEBRTC_PORT) || 8889,
     webrtcProtocol: process.env.MEDIAMTX_WEBRTC_PROTOCOL?.trim() || "http",
-    /** Fallback khi request không có Origin/Host (healthcheck, nội bộ). */
+    /** URL WHEP/WebRTC MediaMTX trung tâm (MEDIAMTX_WEBRTC_URL). */
     webrtcFallbackUrl:
       process.env.MEDIAMTX_WEBRTC_URL?.trim() || "http://127.0.0.1:8889",
     /** origin=webrtcUrl — ghi đè khi WHEP host khác hostname FE (CDN, tunnel…). */

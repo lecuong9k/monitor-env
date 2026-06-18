@@ -146,6 +146,7 @@ export async function updateCameraStreamQualityController(request, reply) {
     return await updateCameraStreamQuality(
       Number(request.params.id),
       qualityId,
+      clientContextFromRequest(request),
     );
   } catch (err) {
     request.log.error(err);
