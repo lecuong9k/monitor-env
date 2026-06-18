@@ -141,6 +141,17 @@ export async function restartCameraStream(cameraId, request) {
   );
 }
 
+export async function forceCameraStreamFallback(cameraId, request) {
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/fallback`,
+    {
+      method: "POST",
+      body: "{}",
+    },
+    request,
+  );
+}
+
 export async function updateCameraStreamQuality(cameraId, qualityId) {
   return cameraServiceFetch(`/cameras/${cameraId}/stream/quality`, {
     method: "POST",

@@ -67,6 +67,18 @@ export async function restartCameraStreamController(request, reply) {
   }
 }
 
+export async function forceCameraStreamFallbackController(request, reply) {
+  try {
+    return await cameraClient.forceCameraStreamFallback(
+      request.params.id,
+      request,
+    );
+  } catch (err) {
+    request.log.error(err);
+    return reply.code(500).send({ error: err.message });
+  }
+}
+
 export async function cameraStreamWsController(socket, request) {
   cameraClient.proxyCameraWebSocket(socket, Number(request.params.id));
 }

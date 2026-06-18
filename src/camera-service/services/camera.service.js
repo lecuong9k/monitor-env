@@ -22,6 +22,7 @@ import {
   startCameraStream,
   stopCameraStream,
   ensureMpegtsRelayStream,
+  forceCameraStreamFallback,
 } from "./stream.service.js";
 
 export async function listCameras(clientContext) {
@@ -66,6 +67,7 @@ export {
   stopCameraStream,
   restartCameraStream,
   ensureMpegtsRelayStream,
+  forceCameraStreamFallback,
 };
 
 export async function updateCameraStreamQuality(
