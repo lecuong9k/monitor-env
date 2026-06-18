@@ -1,20 +1,6 @@
 module.exports = {
   apps: [
     {
-      name: "mediamtx",
-      script: "npm",
-      args: "run mediamtx:prod",
-      cwd: __dirname,
-      exec_mode: "fork",
-      autorestart: true,
-      max_restarts: 20,
-      restart_delay: 2000,
-      watch: false,
-      env: {
-        NODE_ENV: "production",
-      },
-    },
-    {
       name: "camera-service",
       script: "npm",
       args: "run camera-service",

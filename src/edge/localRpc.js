@@ -19,21 +19,8 @@ export async function executeLocalRpc(options = {}) {
     ...(options.headers || {}),
   };
 
-  const relayMode = String(headers["X-Edge-Relay"] || "")
-    .trim()
-    .toLowerCase();
-  delete headers["X-Edge-Relay"];
-
-  let body = options.body;
-  if (
-    relayMode === "mbox" &&
-    method === "POST" &&
-    path.includes("/stream/start")
-  ) {
-    headers["X-Edge-Relay"] = "mbox";
-  }
-
   const fetchOptions = { method, headers };
+  const body = options.body;
   if (body != null && method !== "GET" && method !== "HEAD") {
     if (!headers["Content-Type"]) {
       headers["Content-Type"] = "application/json";
@@ -55,15 +42,9 @@ export async function executeLocalRpc(options = {}) {
     responseBody = text || null;
   }
 
-  const responseHeaders = {};
-  const relayHeader = res.headers.get("x-edge-relay-stream");
-  if (relayHeader) {
-    responseHeaders["x-edge-relay-stream"] = relayHeader;
-  }
-
   return {
     status: res.status,
     body: responseBody,
-    headers: responseHeaders,
+    headers: {},
   };
 }

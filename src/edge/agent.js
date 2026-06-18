@@ -1,17 +1,18 @@
 import WebSocket from "ws";
 import os from "os";
 import { executeLocalRpc } from "./localRpc.js";
+import { collectSystemStats } from "./systemStats.js";
 
 const MIN_RECONNECT_MS = Number(process.env.EDGE_RECONNECT_MIN_MS) || 5_000;
 const MAX_RECONNECT_MS = Number(process.env.EDGE_RECONNECT_MAX_MS) || 60_000;
-
-/** @type {Map<string, { upstream: import('ws').WebSocket | null }>} */
-const streamRelays = new Map();
+const STATUS_REPORT_MS = Number(process.env.EDGE_STATUS_REPORT_MS) || 30_000;
 
 let ws = null;
 let reconnectTimer = null;
+let statusTimer = null;
 let reconnectDelay = MIN_RECONNECT_MS;
 let stopped = false;
+let registered = false;
 
 function getConfig() {
   return {
@@ -32,59 +33,46 @@ function sendJson(payload) {
   ws.send(JSON.stringify(payload));
 }
 
-function encodeBase64(buffer) {
-  return Buffer.from(buffer).toString("base64");
-}
+async function collectHeartbeatPayload() {
+  const stats = collectSystemStats();
+  let health = null;
 
-function closeStreamRelay(relayId, reason) {
-  const relay = streamRelays.get(relayId);
-  if (!relay) return;
-  streamRelays.delete(relayId);
-  if (relay.upstream) {
-    try {
-      relay.upstream.close();
-    } catch {
-      /* ignore */
+  try {
+    const result = await executeLocalRpc({ method: "GET", path: "/health" });
+    if (result.status < 400) {
+      health = result.body;
     }
-    relay.upstream = null;
+  } catch {
+    /* health check tùy chọn */
   }
-  sendJson({
-    type: "stream_relay_closed",
-    relayId,
-    reason: reason || "closed",
-  });
+
+  return {
+    type: "heartbeat",
+    edgeId: getConfig().edgeId,
+    stats,
+    health,
+    streamMode: getConfig().streamMode,
+    pid: process.pid,
+    at: new Date().toISOString(),
+  };
 }
 
-function openStreamRelay(relayId, path) {
-  closeStreamRelay(relayId, "replaced");
+async function sendHeartbeat() {
+  if (!registered) return;
+  sendJson(await collectHeartbeatPayload());
+}
 
-  const port = Number(process.env.PORT) || 3000;
-  const upstreamUrl = `ws://127.0.0.1:${port}${path}`;
+function startStatusReporter() {
+  stopStatusReporter();
+  statusTimer = setInterval(() => {
+    void sendHeartbeat();
+  }, STATUS_REPORT_MS);
+}
 
-  const upstream = new WebSocket(upstreamUrl);
-  streamRelays.set(relayId, { upstream });
-
-  upstream.on("open", () => {
-    console.log(`[edge-agent] stream relay open: ${relayId}`);
-  });
-
-  upstream.on("message", (data, isBinary) => {
-    if (!isBinary) return;
-    sendJson({
-      type: "stream_relay_frame",
-      relayId,
-      data: encodeBase64(data),
-    });
-  });
-
-  upstream.on("close", () => {
-    closeStreamRelay(relayId, "upstream closed");
-  });
-
-  upstream.on("error", (err) => {
-    console.warn(`[edge-agent] stream relay error (${relayId}):`, err.message);
-    closeStreamRelay(relayId, err.message);
-  });
+function stopStatusReporter() {
+  if (!statusTimer) return;
+  clearInterval(statusTimer);
+  statusTimer = null;
 }
 
 async function handleRpc(msg) {
@@ -120,6 +108,14 @@ function handleMessage(raw) {
     return;
   }
 
+  if (msg.type === "registered") {
+    registered = true;
+    console.log(`[edge-agent] Registered as ${msg.edgeId}`);
+    void sendHeartbeat();
+    startStatusReporter();
+    return;
+  }
+
   if (msg.type === "ping") {
     sendJson({ type: "pong", at: new Date().toISOString() });
     return;
@@ -127,20 +123,6 @@ function handleMessage(raw) {
 
   if (msg.type === "rpc") {
     void handleRpc(msg);
-    return;
-  }
-
-  if (msg.type === "stream_relay_open") {
-    const relayId = String(msg.relayId || "").trim();
-    const path = String(msg.path || "").trim();
-    if (relayId && path) {
-      openStreamRelay(relayId, path);
-    }
-    return;
-  }
-
-  if (msg.type === "stream_relay_close") {
-    closeStreamRelay(String(msg.relayId || "").trim(), "remote close");
   }
 }
 
@@ -156,6 +138,9 @@ function scheduleReconnect() {
 function connect() {
   const { url, edgeId, token, streamMode } = getConfig();
   if (!url || !edgeId) return;
+
+  registered = false;
+  stopStatusReporter();
 
   if (ws) {
     try {
@@ -182,18 +167,17 @@ function connect() {
         pid: process.pid,
       },
     });
-    console.log(`[edge-agent] Connected, waiting for registration...`);
+    console.log("[edge-agent] Connected, waiting for registration...");
   });
 
   ws.on("message", handleMessage);
 
   ws.on("close", (code, reason) => {
+    registered = false;
+    stopStatusReporter();
     console.warn(
       `[edge-agent] Disconnected (${code}): ${reason?.toString() || ""}`,
     );
-    for (const relayId of [...streamRelays.keys()]) {
-      closeStreamRelay(relayId, "agent disconnected");
-    }
     ws = null;
     scheduleReconnect();
   });
@@ -216,12 +200,10 @@ export function startEdgeAgent() {
 
   const shutdown = () => {
     stopped = true;
+    stopStatusReporter();
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
-    }
-    for (const relayId of [...streamRelays.keys()]) {
-      closeStreamRelay(relayId, "shutdown");
     }
     if (ws) {
       try {
