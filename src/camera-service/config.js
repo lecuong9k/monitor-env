@@ -30,6 +30,24 @@ function parseOriginMap(raw) {
   return map;
 }
 
+/** rtsp://host:8554 — MiniPC FFmpeg push stream lên MediaMTX VPS. */
+function resolveRtspPublishUrl() {
+  const explicit = process.env.MEDIAMTX_RTSP_PUBLISH_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const apiUrl = process.env.MEDIAMTX_API_URL?.trim();
+  if (!apiUrl) return null;
+
+  try {
+    const { hostname } = new URL(apiUrl);
+    if (hostname) return `rtsp://${hostname}:8554`;
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 export const config = {
   port: Number(process.env.CAMERA_SERVICE_PORT) || 4001,
   host: process.env.CAMERA_SERVICE_HOST || "127.0.0.1",
@@ -63,5 +81,10 @@ export const config = {
       process.env.MEDIAMTX_WEBRTC_URL?.trim() || "http://127.0.0.1:8889",
     /** origin=webrtcUrl — ghi đè khi WHEP host khác hostname FE (CDN, tunnel…). */
     webrtcOriginMap: parseOriginMap(process.env.MEDIAMTX_WEBRTC_ORIGIN_MAP),
+    /**
+     * Base RTSP publish tới MediaMTX trung tâm (vd. rtsp://45.76.152.73:8554).
+     * Mặc định suy ra từ hostname MEDIAMTX_API_URL + :8554.
+     */
+    rtspPublishUrl: resolveRtspPublishUrl(),
   },
 };

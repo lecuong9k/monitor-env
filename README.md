@@ -1,6 +1,6 @@
 # monitor-env-be (MiniPC)
 
-Kiến trúc: MiniPC kết nối WebSocket outbound lên Mbox; video stream qua **MediaMTX trung tâm** trên server Mbox.
+Kiến trúc: MiniPC kết nối WebSocket outbound lên Mbox; **FFmpeg push RTSP** lên MediaMTX trung tâm; browser xem **WHEP** trên VPS.
 
 ## Deploy Production — MiniPC
 
@@ -15,10 +15,15 @@ Sửa `.env.production` (hoặc `.env.local`):
 | `EDGE_AGENT_TOKEN`           | Trùng với Mbox                                                               |
 | `MEDIAMTX_API_URL`           | `http://<mbox-ip>:9997`                                                      |
 | `MEDIAMTX_WEBRTC_URL`        | `http://<mbox-ip>:8889` — URL WHEP/WebRTC trung tâm (browser gọi trực tiếp)  |
+| `MEDIAMTX_RTSP_PUBLISH_URL`  | `rtsp://<mbox-ip>:8554` — MiniPC FFmpeg push stream (mặc định suy ra từ API) |
 | `MEDIAMTX_WEBRTC_ORIGIN_MAP` | Tùy chọn: `http://<fe-origin>=http://<whep-host>:8889` ghi đè theo origin FE |
 | `MEDIAMTX_LOCAL_FALLBACK`    | `true` (mặc định) — relay MPEG-TS local khi MediaMTX sập, chỉ client LAN     |
 | `CAMERA_SECRETS_KEY`         | `npm run secrets:key`                                                        |
 | `CAMERA_SERVICE_API_KEY`     | `openssl rand -hex 32`                                                       |
+
+**VPS (Mbox):** mở TCP `8554` cho IP MiniPC (RTSP publish), `8889`+`8189` cho WHEP. Xem `Mbox/deploy/setup-firewall.sh`.
+
+**MiniPC:** cần `ffmpeg` trên PATH.
 
 ### 2) Deploy
 
@@ -43,8 +48,9 @@ Log edge agent: `[edge-agent] Registered as <EDGE_ID>`
 ### Development
 
 ```bash
-# Terminal 1 — MediaMTX local (dev only)
-npm run mediamtx
+# Terminal 1 — MediaMTX local trên Mbox (dev only)
+cd ../Mbox && npm run mediamtx:dev
+# hoặc từ monitor-env-be: npm run mediamtx
 
 # Terminal 2 — camera-service
 npm run camera-service:dev
@@ -68,7 +74,12 @@ curl -X POST http://127.0.0.1:4001/cameras \
 
 Production: chạy trên **server Mbox** — xem `Mbox/README` hoặc `Mbox/mediamtx.production.yml`.
 
-MiniPC **không** chạy MediaMTX production.
+MiniPC **không** chạy MediaMTX production. Luồng video:
+
+```
+Camera (LAN) ← RTSP ← MiniPC (FFmpeg) → RTSP publish → MediaMTX :8554
+Browser (Mbox UI) → WHEP :8889/camera1/whep
+```
 
 ### Backup local (MediaMTX sập)
 
