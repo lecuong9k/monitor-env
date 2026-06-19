@@ -24,8 +24,8 @@
 export const STREAM_QUALITY_PRESETS = {
   main: {
     id: "main",
-    label: "MainStream",
-    description: "subtype=0 · main stream",
+    label: "HD",
+    description: "subtype=0 · HD",
     subtype: 0,
     inputProfile: "lowLatency",
     transcodePolicy: "copyFirst",
@@ -38,8 +38,8 @@ export const STREAM_QUALITY_PRESETS = {
   },
   sub: {
     id: "sub",
-    label: "SubStream",
-    description: "subtype=1 · sub stream",
+    label: "Tiêu chuẩn",
+    description: "subtype=1 · tiêu chuẩn",
     subtype: 1,
     inputProfile: "stable",
     // Sub stream camera thường HEVC / timestamp lệch — chuẩn hóa H.264 cho mpegts.js
@@ -54,8 +54,8 @@ export const STREAM_QUALITY_PRESETS = {
   },
   mobile: {
     id: "mobile",
-    label: "MobileStream",
-    description: "subtype=2 · mobile stream",
+    label: "Tiết kiệm",
+    description: "subtype=2 · tiết kiệm",
     subtype: 2,
     inputProfile: "stable",
     transcodePolicy: "copyFirst",
@@ -96,6 +96,73 @@ export function listStreamQualityOptions() {
   return Object.values(STREAM_QUALITY_PRESETS).map(
     ({ id, label, description }) => ({ id, label, description }),
   );
+}
+
+const QUALITY_PATH_FIELDS = {
+  main: "rtsp_path_main",
+  sub: "rtsp_path_sub",
+  mobile: "rtsp_path_mobile",
+};
+
+/** @param {string | null | undefined} path */
+function isRtspPathConfigured(path) {
+  return Boolean(String(path || "").trim());
+}
+
+/**
+ * @param {{
+ *   rtsp_url_override?: string | null;
+ *   rtsp_path_main?: string | null;
+ *   rtsp_path_sub?: string | null;
+ *   rtsp_path_mobile?: string | null;
+ * } | null | undefined} camera
+ */
+export function listStreamQualityOptionsForCamera(camera) {
+  if (!camera) {
+    return listStreamQualityOptions();
+  }
+
+  if (isRtspPathConfigured(camera.rtsp_url_override)) {
+    const preset = STREAM_QUALITY_PRESETS.main;
+    return [
+      { id: preset.id, label: preset.label, description: preset.description },
+    ];
+  }
+
+  return Object.values(STREAM_QUALITY_PRESETS)
+    .filter((preset) =>
+      isRtspPathConfigured(camera[QUALITY_PATH_FIELDS[preset.id]]),
+    )
+    .map(({ id, label, description }) => ({ id, label, description }));
+}
+
+/**
+ * @param {{
+ *   rtsp_url_override?: string | null;
+ *   rtsp_path_main?: string | null;
+ *   rtsp_path_sub?: string | null;
+ *   rtsp_path_mobile?: string | null;
+ * } | null | undefined} camera
+ * @param {string} [requestedId]
+ */
+export function pickStreamQualityForCamera(camera, requestedId) {
+  const options = listStreamQualityOptionsForCamera(camera);
+  if (!options.length) {
+    return resolveStreamQualityId(requestedId);
+  }
+
+  const resolved = resolveStreamQualityId(requestedId);
+  if (options.some((option) => option.id === resolved)) {
+    return resolved;
+  }
+
+  for (const fallbackId of ["mobile", "sub", "main"]) {
+    if (options.some((option) => option.id === fallbackId)) {
+      return /** @type {StreamQualityId} */ (fallbackId);
+    }
+  }
+
+  return /** @type {StreamQualityId} */ (options[0].id);
 }
 
 /** @param {StreamQualityId} id */
