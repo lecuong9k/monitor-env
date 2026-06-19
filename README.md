@@ -48,8 +48,9 @@ Log edge agent: `[edge-agent] Registered as <EDGE_ID>`
 ### Development
 
 ```bash
-# Terminal 1 — MediaMTX local (dev only)
-npm run mediamtx
+# Terminal 1 — MediaMTX local trên Mbox (dev only)
+cd ../Mbox && npm run mediamtx:dev
+# hoặc từ monitor-env-be: npm run mediamtx
 
 # Terminal 2 — camera-service
 npm run camera-service:dev
