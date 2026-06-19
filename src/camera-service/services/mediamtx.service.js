@@ -68,6 +68,40 @@ export async function isMediamtxAvailable(options = {}) {
   }
 }
 
+export function isRtspPushEnabled() {
+  return Boolean(config.mediamtx.rtspPublishUrl);
+}
+
+/** @param {string} pathName */
+export function getRtspPublishUrl(pathName) {
+  const base = config.mediamtx.rtspPublishUrl?.replace(/\/$/, "");
+  if (!base) {
+    throw new Error("MEDIAMTX_RTSP_PUBLISH_URL chưa cấu hình");
+  }
+  const normalized = String(pathName || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  if (!normalized) {
+    throw new Error("mediamtx_path không hợp lệ");
+  }
+  return `${base}/${normalized}`;
+}
+
+/** Đăng ký path chờ MiniPC RTSP publish (thay vì VPS pull camera LAN). */
+export async function ensurePathPublisher(pathName) {
+  const body = {
+    source: "publisher",
+    sourceOnDemand: false,
+    rtspTransport: "tcp",
+  };
+
+  await mtxFetch(`/v3/config/paths/replace/${encodeURIComponent(pathName)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** @deprecated Chỉ dùng khi VPS reach được camera (dev/LAN). Production dùng ensurePathPublisher. */
 export async function ensurePathSource(pathName, rtspUrl) {
   const body = {
     source: rtspUrl,
