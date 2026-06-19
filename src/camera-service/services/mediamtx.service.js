@@ -1,4 +1,5 @@
 import { config } from "../config.js";
+import { resolveWebrtcBaseUrl } from "../utils/webrtc-client-url.js";
 
 function apiBase() {
   return config.mediamtx.apiUrl.replace(/\/$/, "");
@@ -26,18 +27,45 @@ async function mtxFetch(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-export function getWhepUrl(pathName) {
-  const base = config.mediamtx.webrtcPublicUrl.replace(/\/$/, "");
+/** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
+export function getWhepUrl(pathName, clientContext) {
+  const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");
   return `${base}/${pathName}/whep`;
 }
 
-export function getWebRtcPageUrl(pathName) {
-  const base = config.mediamtx.webrtcPublicUrl.replace(/\/$/, "");
+/** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
+export function getWebRtcPageUrl(pathName, clientContext) {
+  const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");
   return `${base}/${pathName}`;
 }
 
 export async function checkMediamtxAvailable() {
   await mtxFetch("/v3/config/global/get");
+}
+
+let healthCache = { available: null, checkedAt: 0 };
+
+/** @param {{ force?: boolean }} [options] */
+export async function isMediamtxAvailable(options = {}) {
+  const ttl = config.mediamtxHealthCacheMs;
+  const now = Date.now();
+
+  if (
+    !options.force &&
+    healthCache.available !== null &&
+    now - healthCache.checkedAt < ttl
+  ) {
+    return healthCache.available;
+  }
+
+  try {
+    await checkMediamtxAvailable();
+    healthCache = { available: true, checkedAt: now };
+    return true;
+  } catch {
+    healthCache = { available: false, checkedAt: now };
+    return false;
+  }
 }
 
 export async function ensurePathSource(pathName, rtspUrl) {
@@ -49,17 +77,80 @@ export async function ensurePathSource(pathName, rtspUrl) {
     rtspTransport: "tcp",
   };
 
+  await mtxFetch(`/v3/config/paths/replace/${encodeURIComponent(pathName)}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** SDP tối thiểu để kích hoạt WHEP reader (probe nguồn on-demand). */
+const WHEP_PROBE_SDP = [
+  "v=0",
+  "o=- 0 0 IN IP4 127.0.0.1",
+  "s=-",
+  "t=0 0",
+  "a=group:BUNDLE 0 1",
+  "a=msid-semantic: WMS",
+  "m=video 9 UDP/TLS/RTP/SAVPF 96",
+  "c=IN IP4 0.0.0.0",
+  "a=rtcp-mux",
+  "a=recvonly",
+  "a=mid:0",
+  "m=audio 9 UDP/TLS/RTP/SAVPF 111",
+  "c=IN IP4 0.0.0.0",
+  "a=rtcp-mux",
+  "a=recvonly",
+  "a=mid:1",
+].join("\r\n");
+
+/**
+ * Thử POST WHEP lên MediaMTX trung tâm — xác nhận nguồn RTSP thực sự online.
+ * @param {string} pathName
+ * @param {{ origin?: string | null, host?: string | null }} [clientContext]
+ * @param {number} [timeoutMs]
+ */
+export async function probeCentralWhep(
+  pathName,
+  clientContext,
+  timeoutMs = 12_000,
+) {
+  const whepUrl = getWhepUrl(pathName, clientContext);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    await mtxFetch(`/v3/config/paths/patch/${encodeURIComponent(pathName)}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    });
-  } catch (err) {
-    if (err.status !== 404) throw err;
-    await mtxFetch(`/v3/config/paths/add/${encodeURIComponent(pathName)}`, {
+    const res = await fetch(whepUrl, {
       method: "POST",
-      body: JSON.stringify(body),
+      headers: {
+        "Content-Type": "application/sdp",
+        Accept: "application/sdp",
+      },
+      body: WHEP_PROBE_SDP,
+      signal: controller.signal,
     });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(
+        `MediaMTX WHEP probe failed${body ? `: ${body.slice(0, 200)}` : ""}`,
+      );
+    }
+
+    const sessionUrl = res.headers.get("location");
+    if (sessionUrl) {
+      void fetch(sessionUrl, { method: "DELETE" }).catch(() => {});
+    }
+
+    return true;
+  } catch (err) {
+    if (err.name === "AbortError") {
+      throw new Error(
+        "MediaMTX WHEP probe timeout — nguồn RTSP không phản hồi kịp",
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -71,7 +162,7 @@ export async function waitPathOnline(pathName, timeoutMs = 20_000) {
       const path = await mtxFetch(
         `/v3/paths/get/${encodeURIComponent(pathName)}`,
       );
-      if (path?.online || path?.available) return path;
+      if (path?.online === true) return path;
     } catch {
       // path chưa sẵn sàng
     }
@@ -85,14 +176,11 @@ export async function waitPathOnline(pathName, timeoutMs = 20_000) {
 
 export async function clearPathSource(pathName) {
   try {
-    await mtxFetch(`/v3/config/paths/patch/${encodeURIComponent(pathName)}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        source: "publisher",
-        sourceOnDemand: false,
-      }),
+    await mtxFetch(`/v3/config/paths/delete/${encodeURIComponent(pathName)}`, {
+      method: "DELETE",
     });
-  } catch {
-    // bỏ qua nếu path không tồn tại
+  } catch (err) {
+    if (err.status === 404) return;
+    throw err;
   }
 }

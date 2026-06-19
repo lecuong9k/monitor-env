@@ -14,6 +14,23 @@ function serviceHeaders(extra = {}) {
   };
 }
 
+/** Chuyển Origin/Host từ request FE sang camera-service (origin map WHEP nếu có). */
+function clientProxyHeaders(request) {
+  if (!request?.headers) return {};
+
+  const headers = {};
+  const origin = request.headers.origin;
+  const referer = request.headers.referer;
+  const host =
+    request.headers["x-forwarded-host"] || request.headers.host || null;
+
+  if (origin) headers["X-Client-Origin"] = origin;
+  else if (referer) headers["X-Client-Origin"] = referer;
+  if (host) headers["X-Forwarded-Host"] = host;
+
+  return headers;
+}
+
 async function parseResponse(res) {
   const text = await res.text();
   let body = null;
@@ -38,16 +55,19 @@ async function parseResponse(res) {
   return body;
 }
 
-export async function cameraServiceFetch(path, options = {}) {
+export async function cameraServiceFetch(path, options = {}, request) {
   const res = await fetch(`${BASE_URL.replace(/\/$/, "")}${path}`, {
     ...options,
-    headers: serviceHeaders(options.headers),
+    headers: serviceHeaders({
+      ...clientProxyHeaders(request),
+      ...options.headers,
+    }),
   });
   return parseResponse(res);
 }
 
-export async function listCameras() {
-  return cameraServiceFetch("/cameras");
+export async function listCameras(request) {
+  return cameraServiceFetch("/cameras", {}, request);
 }
 
 export async function listCamerasRegistry() {
@@ -78,23 +98,29 @@ export async function deleteCamera(cameraId) {
   });
 }
 
-export async function getCameraStreamUrl(cameraId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream-url`);
+export async function getCameraStreamUrl(cameraId, request) {
+  return cameraServiceFetch(`/cameras/${cameraId}/stream-url`, {}, request);
 }
 
 export async function getCameraStreamOptions(cameraId) {
   return cameraServiceFetch(`/cameras/${cameraId}/stream/options`);
 }
 
-export async function getStreamStatus(cameraId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/status`);
+export async function getStreamStatus(cameraId, request) {
+  return cameraServiceFetch(`/cameras/${cameraId}/stream/status`, {}, request);
 }
 
-export async function startCameraStream(cameraId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/start`, {
-    method: "POST",
-    body: "{}",
-  });
+export async function startCameraStream(cameraId, request) {
+  const relay = request?.headers?.["x-edge-relay"] === "mbox";
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/start`,
+    {
+      method: "POST",
+      body: "{}",
+      headers: relay ? { "X-Edge-Relay": "mbox" } : {},
+    },
+    request,
+  );
 }
 
 export async function stopCameraStream(cameraId) {
@@ -104,11 +130,26 @@ export async function stopCameraStream(cameraId) {
   });
 }
 
-export async function restartCameraStream(cameraId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/restart`, {
-    method: "POST",
-    body: "{}",
-  });
+export async function restartCameraStream(cameraId, request) {
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/restart`,
+    {
+      method: "POST",
+      body: "{}",
+    },
+    request,
+  );
+}
+
+export async function forceCameraStreamFallback(cameraId, request) {
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/fallback`,
+    {
+      method: "POST",
+      body: "{}",
+    },
+    request,
+  );
 }
 
 export async function updateCameraStreamQuality(cameraId, qualityId) {
@@ -194,12 +235,30 @@ export function proxyCameraWebSocket(clientSocket, cameraId) {
     });
   });
 
+  const isValidCloseCode = (code) =>
+    typeof code === "number" &&
+    ((code >= 1000 &&
+      code <= 1014 &&
+      code !== 1004 &&
+      code !== 1005 &&
+      code !== 1006) ||
+      (code >= 3000 && code <= 4999));
+
   const closeBoth = (code, reason) => {
-    if (clientSocket.readyState === 1) clientSocket.close(code, reason);
-    if (upstream.readyState === WebSocket.OPEN) upstream.close(code, reason);
+    const safeCode = isValidCloseCode(code) ? code : undefined;
+    if (clientSocket.readyState === 1) clientSocket.close(safeCode, reason);
+    if (upstream.readyState === WebSocket.OPEN)
+      upstream.close(safeCode, reason);
   };
 
-  upstream.on("close", (code, reason) => closeBoth(code, reason.toString()));
+  upstream.on("close", (code, reason) => {
+    const reasonStr = reason
+      ? Buffer.isBuffer(reason)
+        ? reason.toString()
+        : String(reason)
+      : undefined;
+    closeBoth(code, reasonStr);
+  });
   upstream.on("error", () => closeBoth(1011, "Upstream error"));
   clientSocket.on("close", () => {
     if (upstream.readyState === WebSocket.OPEN) upstream.close();
@@ -210,6 +269,10 @@ export function proxyCameraWebSocket(clientSocket, cameraId) {
 }
 
 export async function checkCameraServiceHealth() {
-  const res = await fetch(`${BASE_URL.replace(/\/$/, "")}/health`);
-  return res.ok;
+  try {
+    const res = await fetch(`${BASE_URL.replace(/\/$/, "")}/health`);
+    return res.ok;
+  } catch {
+    return false;
+  }
 }

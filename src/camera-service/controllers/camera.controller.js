@@ -12,15 +12,18 @@ import {
   stopCameraStream,
   updateCameraRecord,
   updateCameraStreamQuality,
+  ensureMpegtsRelayStream,
+  forceCameraStreamFallback,
 } from "../services/camera.service.js";
 import {
   addWsClient,
   attachMpegTsClient,
   getStreamStatus,
 } from "../services/stream.service.js";
+import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 
-export async function listCamerasController() {
-  return listCameras();
+export async function listCamerasController(request) {
+  return listCameras(clientContextFromRequest(request));
 }
 
 export async function listCamerasRegistryController() {
@@ -62,7 +65,10 @@ export async function deleteCameraController(request, reply) {
 
 export async function getCameraStreamUrlController(request, reply) {
   try {
-    return getCameraStreamUrl(Number(request.params.id));
+    return getCameraStreamUrl(
+      Number(request.params.id),
+      clientContextFromRequest(request),
+    );
   } catch (err) {
     return reply.code(404).send({ error: err.message });
   }
@@ -83,7 +89,11 @@ export async function liveMpegTsController(request, reply) {
 
 export async function startCameraStreamController(request, reply) {
   try {
-    return await startCameraStream(Number(request.params.id));
+    const clientContext = clientContextFromRequest(request);
+    if (request.headers["x-edge-relay"] === "mbox") {
+      return await ensureMpegtsRelayStream(Number(request.params.id));
+    }
+    return await startCameraStream(Number(request.params.id), clientContext);
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -101,7 +111,21 @@ export async function stopCameraStreamController(request, reply) {
 
 export async function restartCameraStreamController(request, reply) {
   try {
-    return await restartCameraStream(Number(request.params.id));
+    const clientContext = clientContextFromRequest(request);
+    return await restartCameraStream(Number(request.params.id), clientContext);
+  } catch (err) {
+    request.log.error(err);
+    return reply.code(500).send({ error: err.message });
+  }
+}
+
+export async function forceCameraStreamFallbackController(request, reply) {
+  try {
+    const clientContext = clientContextFromRequest(request);
+    return await forceCameraStreamFallback(
+      Number(request.params.id),
+      clientContext,
+    );
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -136,6 +160,7 @@ export async function updateCameraStreamQualityController(request, reply) {
     return await updateCameraStreamQuality(
       Number(request.params.id),
       qualityId,
+      clientContextFromRequest(request),
     );
   } catch (err) {
     request.log.error(err);
@@ -154,5 +179,8 @@ export async function ptzController(request, reply) {
 }
 
 export async function streamStatusController(request) {
-  return getStreamStatus(Number(request.params.id));
+  return getStreamStatus(
+    Number(request.params.id),
+    clientContextFromRequest(request),
+  );
 }

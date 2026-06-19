@@ -24,6 +24,28 @@ function isOriginAllowed(origin, allowed) {
   return allowed.includes(origin);
 }
 
+/** MiniPC thường truy cập UI qua IP LAN — Vite thêm crossorigin nên browser gửi Origin. */
+function isPrivateLanOrigin(origin) {
+  try {
+    const { hostname, protocol } = new URL(origin);
+    if (protocol !== "http:" && protocol !== "https:") return false;
+    if (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname === "::1"
+    ) {
+      return true;
+    }
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(hostname))
+      return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Đăng ký middleware bảo mật: helmet, rate-limit, CORS, sensible.
  * Gọi trước khi register routes.
@@ -58,7 +80,9 @@ export async function registerSecurity(fastify) {
 
   await fastify.register(cors, {
     origin: (origin, cb) => {
-      const allowed = !origin || isOriginAllowed(origin, corsOrigins);
+      if (!origin) return cb(null, true);
+      const allowed =
+        isOriginAllowed(origin, corsOrigins) || isPrivateLanOrigin(origin);
       cb(allowed ? null : new Error("Origin not allowed"), allowed);
     },
     methods: ["GET", "POST", "DELETE", "PUT", "PATCH"],

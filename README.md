@@ -1,104 +1,89 @@
-# monitor-env-be
+# monitor-env-be (MiniPC)
 
-## Deploy Production with PM2 (Linux)
+Kiến trúc: MiniPC kết nối WebSocket outbound lên Mbox; video stream qua **MediaMTX trung tâm** trên server Mbox.
 
-### 1) Chuẩn bị source
+## Deploy Production — MiniPC
+
+### 1) Cấu hình
+
+Sửa `.env.production` (hoặc `.env.local`):
+
+| Biến                         | Mô tả                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------- |
+| `EDGE_ID`                    | Unique cho mỗi MiniPC (vd: `site-a-001`)                                     |
+| `MBOX_EDGE_WS_URL`           | `ws://<mbox-ip>:20001/edge/ws`                                               |
+| `EDGE_AGENT_TOKEN`           | Trùng với Mbox                                                               |
+| `MEDIAMTX_API_URL`           | `http://<mbox-ip>:9997`                                                      |
+| `MEDIAMTX_WEBRTC_URL`        | `http://<mbox-ip>:8889` — URL WHEP/WebRTC trung tâm (browser gọi trực tiếp)  |
+| `MEDIAMTX_WEBRTC_ORIGIN_MAP` | Tùy chọn: `http://<fe-origin>=http://<whep-host>:8889` ghi đè theo origin FE |
+| `MEDIAMTX_LOCAL_FALLBACK`    | `true` (mặc định) — relay MPEG-TS local khi MediaMTX sập, chỉ client LAN     |
+| `CAMERA_SECRETS_KEY`         | `npm run secrets:key`                                                        |
+| `CAMERA_SERVICE_API_KEY`     | `openssl rand -hex 32`                                                       |
+
+### 2) Deploy
 
 ```bash
-cd /home/admin/monitor-env-be
 npm install --omit=dev
-```
-
-> Nếu FE tách repo, build FE trước rồi copy vào `dist/` của BE.
-
-### 2) Cấu hình môi trường
-
-- Sửa `.env.production` theo IP server/camera thật.
-- Có thể tạo `.env.local` để ghi đè secret, file này không commit.
-- **Bắt buộc** trong `.env.local` trên server:
-  - `CAMERA_SECRETS_KEY` — sinh bằng `npm run secrets:key` (64 ký tự hex)
-  - `CAMERA_SERVICE_API_KEY` — chuỗi ngẫu nhiên, dùng xác thực nội bộ BE ↔ camera-service
-- Camera lưu trong `data/camera.db` (mật khẩu mã hóa AES-256-GCM). Thêm/sửa qua web `#/cau-hinh/camera`.
-
-### 3) Cài MediaMTX binary
-
-```bash
-cd /home/admin/monitor-env-be
-
-# x86_64
-curl -LO https://github.com/bluenviron/mediamtx/releases/download/v1.19.1/mediamtx_v1.19.1_linux_amd64.tar.gz
-
-# arm64 (Raspberry Pi aarch64)
-# curl -LO https://github.com/bluenviron/mediamtx/releases/download/v1.19.1/mediamtx_v1.19.1_linux_arm64.tar.gz
-
-tar -xzf mediamtx_v1.19.1_linux_*.tar.gz
-chmod +x mediamtx
-```
-
-### 4) Nếu đã từng bật systemd trước đó, tắt để tránh đụng port
-
-```bash
-sudo systemctl disable --now mediamtx monitor-env || true
-sudo systemctl daemon-reload
-```
-
-### 5) Chạy bằng PM2
-
-```bash
-cd /home/admin/monitor-env-be
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup
-# chạy lệnh sudo mà PM2 in ra để auto start sau reboot
 ```
 
-### 6) Mở firewall
+Hoặc: `bash deploy/deploy.sh`
 
-- `3000/tcp` (web app)
-- `8889/tcp` (WHEP)
-- `8189/udp` (WebRTC ICE)
-- Không mở `9997` ra public
-
-### 7) Kiểm tra nhanh
+### 3) Kiểm tra
 
 ```bash
-pm2 list
-pm2 logs mediamtx --lines 100
-pm2 logs camera-service --lines 100
-pm2 logs monitor-env --lines 100
-
-curl http://127.0.0.1:9997/v3/config/global/get
-curl http://127.0.0.1:4001/health
-curl -H "X-Camera-Service-Key: $CAMERA_SERVICE_API_KEY" http://127.0.0.1:4001/cameras
+pm2 logs monitor-env --lines 50 | grep edge-agent
 curl http://127.0.0.1:3000/health
-curl http://127.0.0.1:3000/cameras
+curl http://127.0.0.1:4001/health
 ```
 
-### Development (2 terminal)
+Log edge agent: `[edge-agent] Registered as <EDGE_ID>`
+
+### Development
 
 ```bash
-# Terminal 1 — camera service (localhost:4001)
+# Terminal 1 — MediaMTX local (dev only)
+npm run mediamtx
+
+# Terminal 2 — camera-service
 npm run camera-service:dev
 
-# Terminal 2 — main app + FE
+# Terminal 3 — main app + edge agent
 npm run dev
 ```
 
-### Thêm camera (API nội bộ, cần header `X-Camera-Service-Key`)
+### Camera
+
+Thêm camera tại `#/cau-hinh/camera`. Mỗi camera cần `mediamtx_path` **duy nhất toàn hệ thống** (vd: `site-a-cam1`).
 
 ```bash
 curl -X POST http://127.0.0.1:4001/cameras \
   -H "Content-Type: application/json" \
   -H "X-Camera-Service-Key: $CAMERA_SERVICE_API_KEY" \
-  -d '{
-    "name": "Camera 2",
-    "host": "192.168.5.62",
-    "username": "admin",
-    "password": "secret",
-    "mediamtx_path": "camera2"
-  }'
+  -d '{"name":"Cam 1","host":"192.168.1.10","username":"admin","password":"secret","mediamtx_path":"site-a-cam1"}'
 ```
 
-Mỗi camera cần `mediamtx_path` riêng (ví dụ `camera1`, `camera2`). MediaMTX tạo path động qua Control API khi start stream.
+## MediaMTX
 
-Nếu `/cameras` trả `text/html` thay vì JSON, nghĩa là FE/API base URL hoặc bản dist chưa đúng phiên bản.
+Production: chạy trên **server Mbox** — xem `Mbox/README` hoặc `Mbox/mediamtx.production.yml`.
+
+MiniPC **không** chạy MediaMTX production.
+
+### Backup local (MediaMTX sập)
+
+Khi `STREAM_MODE=webrtc` và MediaMTX trung tâm không phản hồi, client UI local (localhost / IP LAN) tự chuyển sang relay **MPEG-TS qua FFmpeg** trên MiniPC. UI hiển thị banner cảnh báo; nhấn refresh stream để thử lại WebRTC khi MediaMTX hồi phục.
+
+Yêu cầu: **ffmpeg** có trên MiniPC. Tắt backup: `MEDIAMTX_LOCAL_FALLBACK=false`.
+
+Kiểm thử nhanh:
+
+```bash
+# Giả lập MediaMTX down — đổi URL sai, restart camera-service
+# Mở http://<lan-ip>:3000 → chọn camera → stream qua WebSocket MPEG-TS
+curl -X POST http://127.0.0.1:4001/cameras/1/stream/start \
+  -H "Content-Type: application/json" \
+  -H "X-Camera-Service-Key: $CAMERA_SERVICE_API_KEY" \
+  -H "X-Client-Origin: http://192.168.1.100:3000"
+# Response: "stream_type":"mpegts", "fallback":true
+```

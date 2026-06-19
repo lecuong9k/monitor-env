@@ -1,8 +1,7 @@
 [Unit]
-Description=monitor-env backend (Fastify)
-After=network-online.target mediamtx.service
+Description=monitor-env MiniPC (Fastify + edge agent)
+After=network-online.target
 Wants=network-online.target
-Requires=mediamtx.service
 
 [Service]
 Type=simple

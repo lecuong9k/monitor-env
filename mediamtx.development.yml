@@ -1,6 +1,5 @@
-# MediaMTX — development (monitor-env)
-# Chạy: npm run mediamtx
-# Dừng instance cũ: npm run mediamtx:stop
+# MediaMTX — development only (MiniPC local test)
+# Production: dùng Mbox/mediamtx.production.yml trên server Mbox
 
 logLevel: info
 
@@ -12,18 +11,14 @@ webrtc: yes
 webrtcAddress: :8889
 webrtcAllowOrigins: ["*"]
 webrtcAdditionalHosts: ["127.0.0.1", "localhost"]
-# Dev dùng 8190 tránh xung đột khi instance cũ còn giữ 8189
 webrtcLocalUDPAddress: :8190
 
 rtsp: yes
 rtspAddress: :8554
 
-# Tắt protocol không dùng — giảm port conflict khi dev
 rtmp: no
 hls: no
 srt: no
 moq: no
 
-paths:
-  camera1:
-    source: publisher
+paths: {}
