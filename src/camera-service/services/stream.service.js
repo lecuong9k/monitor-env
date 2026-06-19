@@ -11,8 +11,8 @@ import {
 } from "../repositories/camera.repository.js";
 import {
   getStreamQualityPreset,
-  listStreamQualityOptions,
-  resolveStreamQualityId,
+  listStreamQualityOptionsForCamera,
+  pickStreamQualityForCamera,
 } from "../../config/stream-quality.js";
 import {
   getFfmpegInstallHint,
@@ -102,7 +102,10 @@ function getOrCreateState(cameraId) {
       wsClients: new Set(),
       httpClients: new Set(),
       currentRtspUrl: null,
-      qualityId: resolveStreamQualityId(camera?.stream_quality || "main"),
+      qualityId: pickStreamQualityForCamera(
+        camera,
+        camera?.stream_quality || "main",
+      ),
       transcodeMode: false,
       mtxActive: false,
       localFallback: false,
@@ -449,13 +452,14 @@ async function startLocalMpegtsFallback(state, cameraId, source, quality) {
   state.mtxActive = false;
 }
 
-function getStreamQualityState(state) {
+/** @param {CameraStreamState} state @param {ReturnType<typeof findCameraById>} camera */
+function getStreamQualityState(state, camera) {
   const preset = getStreamQualityPreset(state.qualityId);
   return {
     quality: state.qualityId,
     label: preset.label,
     description: preset.description,
-    options: listStreamQualityOptions(),
+    options: listStreamQualityOptionsForCamera(camera),
   };
 }
 
@@ -467,7 +471,7 @@ export function getStreamStatus(cameraId, clientContext) {
 
   const state = getOrCreateState(cameraId);
   const streaming = isStreaming(state);
-  const qualityState = getStreamQualityState(state);
+  const qualityState = getStreamQualityState(state, camera);
 
   if (state.localFallback) {
     const wsUrl = resolveMpegtsPlayUrl(cameraId, clientContext);
@@ -770,7 +774,7 @@ export async function setStreamQuality(cameraId, qualityId, clientContext) {
   }
 
   const state = getOrCreateState(cameraId);
-  const nextId = resolveStreamQualityId(qualityId);
+  const nextId = pickStreamQualityForCamera(camera, qualityId);
   const changed = nextId !== state.qualityId;
   state.qualityId = nextId;
 
@@ -778,7 +782,7 @@ export async function setStreamQuality(cameraId, qualityId, clientContext) {
     await restartCameraStream(cameraId, clientContext);
   }
 
-  return getStreamQualityState(state);
+  return getStreamQualityState(state, camera);
 }
 
 export function addWsClient(cameraId, socket) {
@@ -881,7 +885,7 @@ export function getStreamQualityForCamera(cameraId) {
     throw new Error("Không tìm thấy camera");
   }
   const state = getOrCreateState(cameraId);
-  return getStreamQualityState(state);
+  return getStreamQualityState(state, camera);
 }
 
 export function getStreamInfo(cameraId, clientContext) {
