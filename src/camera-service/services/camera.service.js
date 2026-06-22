@@ -30,7 +30,7 @@ export async function listCameras(clientContext) {
   return cameras.map((camera) => {
     let stream;
     try {
-      stream = getStreamInfo(camera.id, clientContext);
+      stream = getStreamInfo(camera.id, clientContext, camera.stream_quality);
     } catch {
       stream = { stream_type: config.streamMode };
     }
@@ -54,12 +54,12 @@ export function listCamerasRegistry() {
   return findAllCameras().map((row) => toAdminCamera(row));
 }
 
-export function getCameraStreamUrl(cameraId, clientContext) {
-  return getStreamInfo(cameraId, clientContext);
+export function getCameraStreamUrl(cameraId, clientContext, qualityId) {
+  return getStreamInfo(cameraId, clientContext, qualityId);
 }
 
-export function getCameraStreamOptions(cameraId) {
-  return getStreamQualityForCamera(cameraId);
+export function getCameraStreamOptions(cameraId, qualityId) {
+  return getStreamQualityForCamera(cameraId, qualityId);
 }
 
 export {

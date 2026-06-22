@@ -31,6 +31,16 @@ function clientProxyHeaders(request) {
   return headers;
 }
 
+function qualityQuery(qualityId) {
+  if (!qualityId) return "";
+  return `?quality=${encodeURIComponent(String(qualityId))}`;
+}
+
+function bodyWithQuality(qualityId, extra = {}) {
+  if (!qualityId) return JSON.stringify(extra);
+  return JSON.stringify({ qualityId, ...extra });
+}
+
 async function parseResponse(res) {
   const text = await res.text();
   let body = null;
@@ -98,65 +108,80 @@ export async function deleteCamera(cameraId) {
   });
 }
 
-export async function getCameraStreamUrl(cameraId, request) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream-url`, {}, request);
+export async function getCameraStreamUrl(cameraId, request, qualityId) {
+  const qs = qualityQuery(qualityId);
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream-url${qs}`,
+    {},
+    request,
+  );
 }
 
-export async function getCameraStreamOptions(cameraId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/options`);
+export async function getCameraStreamOptions(cameraId, qualityId) {
+  const qs = qualityQuery(qualityId);
+  return cameraServiceFetch(`/cameras/${cameraId}/stream/options${qs}`);
 }
 
-export async function getStreamStatus(cameraId, request) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/status`, {}, request);
+export async function getStreamStatus(cameraId, request, qualityId) {
+  const qs = qualityQuery(qualityId);
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/status${qs}`,
+    {},
+    request,
+  );
 }
 
-export async function startCameraStream(cameraId, request) {
+export async function startCameraStream(cameraId, request, qualityId) {
   const relay = request?.headers?.["x-edge-relay"] === "mbox";
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/start`,
     {
       method: "POST",
-      body: "{}",
+      body: bodyWithQuality(qualityId),
       headers: relay ? { "X-Edge-Relay": "mbox" } : {},
     },
     request,
   );
 }
 
-export async function stopCameraStream(cameraId) {
+export async function stopCameraStream(cameraId, qualityId) {
   return cameraServiceFetch(`/cameras/${cameraId}/stream/stop`, {
     method: "POST",
-    body: "{}",
+    body: bodyWithQuality(qualityId),
   });
 }
 
-export async function restartCameraStream(cameraId, request) {
+export async function restartCameraStream(cameraId, request, qualityId) {
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/restart`,
     {
       method: "POST",
-      body: "{}",
+      body: bodyWithQuality(qualityId),
     },
     request,
   );
 }
 
-export async function forceCameraStreamFallback(cameraId, request) {
+export async function forceCameraStreamFallback(cameraId, request, qualityId) {
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/fallback`,
     {
       method: "POST",
-      body: "{}",
+      body: bodyWithQuality(qualityId),
     },
     request,
   );
 }
 
-export async function updateCameraStreamQuality(cameraId, qualityId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/quality`, {
-    method: "POST",
-    body: JSON.stringify({ qualityId }),
-  });
+export async function updateCameraStreamQuality(cameraId, qualityId, request) {
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/quality`,
+    {
+      method: "POST",
+      body: JSON.stringify({ qualityId }),
+    },
+    request,
+  );
 }
 
 export async function executePtz(cameraId, body) {
@@ -166,11 +191,12 @@ export async function executePtz(cameraId, body) {
   });
 }
 
-export async function proxyMpegTsStream(cameraId, reply, request) {
+export async function proxyMpegTsStream(cameraId, reply, request, qualityId) {
+  const qs = qualityQuery(qualityId);
   const res = await fetch(
-    `${BASE_URL.replace(/\/$/, "")}/cameras/${cameraId}/stream/live.ts`,
+    `${BASE_URL.replace(/\/$/, "")}/cameras/${cameraId}/stream/live.ts${qs}`,
     {
-      headers: serviceHeaders(),
+      headers: serviceHeaders(clientProxyHeaders(request)),
     },
   );
 
@@ -211,9 +237,10 @@ function wsBaseUrl() {
   return url.origin;
 }
 
-export function proxyCameraWebSocket(clientSocket, cameraId) {
+export function proxyCameraWebSocket(clientSocket, cameraId, qualityId) {
+  const qs = qualityQuery(qualityId);
   const upstream = new WebSocket(
-    `${wsBaseUrl()}/cameras/${cameraId}/stream/ws`,
+    `${wsBaseUrl()}/cameras/${cameraId}/stream/ws${qs}`,
     {
       headers: {
         "X-Camera-Service-Key": API_KEY,

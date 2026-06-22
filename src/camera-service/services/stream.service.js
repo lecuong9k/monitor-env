@@ -13,6 +13,7 @@ import {
   getStreamQualityPreset,
   listStreamQualityOptionsForCamera,
   pickStreamQualityForCamera,
+  resolveStreamQualityId,
 } from "../../config/stream-quality.js";
 import {
   getFfmpegInstallHint,
@@ -29,26 +30,31 @@ import {
   getWebRtcPageUrl,
   getWhepUrl,
   isRtspPushEnabled,
+  resolveQualityPath,
   waitPathOnline,
 } from "./mediamtx.service.js";
 import { resolvePublicWsBaseUrl } from "../utils/public-ws-url.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 
 /**
+ * @typedef {import('../../config/stream-quality.js').StreamQualityId} StreamQualityId
  * @typedef {{
  *   ffmpegProcess: import('fluent-ffmpeg').FfmpegCommand | null;
  *   outputStream: PassThrough | null;
  *   wsClients: Set<import('ws').WebSocket>;
  *   httpClients: Set<import('node:http').ServerResponse>;
  *   currentRtspUrl: string | null;
- *   qualityId: import('../../config/stream-quality.js').StreamQualityId;
+ *   qualityId: StreamQualityId;
  *   transcodeMode: boolean;
  *   mtxActive: boolean;
  *   localFallback: boolean;
- * }} CameraStreamState
+ *   mtxPathName: string | null;
+ *   startingPromise: Promise<void> | null;
+ *   idleSince: number | null;
+ * }} QualityStreamState
  */
 
-/** @type {Map<number, CameraStreamState>} */
+/** @type {Map<number, Map<StreamQualityId, QualityStreamState>>} */
 const streams = new Map();
 
 const INPUT_PROFILES = {
@@ -92,38 +98,57 @@ if (ffmpegPath) {
   ffmpeg.setFfmpegPath(ffmpegPath);
 }
 
-/** @param {number} cameraId */
-function getOrCreateState(cameraId) {
+/** @param {StreamQualityId} qualityId */
+function createQualityState(qualityId) {
+  return {
+    ffmpegProcess: null,
+    outputStream: null,
+    wsClients: new Set(),
+    httpClients: new Set(),
+    currentRtspUrl: null,
+    qualityId,
+    transcodeMode: false,
+    mtxActive: false,
+    localFallback: false,
+    mtxPathName: null,
+    startingPromise: null,
+    idleSince: null,
+  };
+}
+
+/** @param {number} cameraId @param {StreamQualityId} qualityId */
+function getOrCreateQualityState(cameraId, qualityId) {
   if (!streams.has(cameraId)) {
-    const camera = findCameraById(cameraId);
-    streams.set(cameraId, {
-      ffmpegProcess: null,
-      outputStream: null,
-      wsClients: new Set(),
-      httpClients: new Set(),
-      currentRtspUrl: null,
-      qualityId: pickStreamQualityForCamera(
-        camera,
-        camera?.stream_quality || "main",
-      ),
-      transcodeMode: false,
-      mtxActive: false,
-      localFallback: false,
-    });
+    streams.set(cameraId, new Map());
   }
-  return streams.get(cameraId);
+  const byQuality = streams.get(cameraId);
+  if (!byQuality.has(qualityId)) {
+    byQuality.set(qualityId, createQualityState(qualityId));
+  }
+  return /** @type {QualityStreamState} */ (byQuality.get(qualityId));
 }
 
-function hlsDir(cameraId) {
-  return path.join(path.resolve(config.hlsOutputDir), `live-${cameraId}`);
+/** @param {ReturnType<typeof findCameraById>} camera @param {string} [requestedId] */
+export function resolveCameraQualityId(camera, requestedId) {
+  return pickStreamQualityForCamera(
+    camera,
+    requestedId || camera?.stream_quality || "main",
+  );
 }
 
-function hlsPlaylist(cameraId) {
-  return path.join(hlsDir(cameraId), "index.m3u8");
+function hlsDir(cameraId, qualityId) {
+  return path.join(
+    path.resolve(config.hlsOutputDir),
+    `live-${cameraId}-${qualityId}`,
+  );
 }
 
-function hlsPlaylistUrl(cameraId) {
-  return `/streams/live-${cameraId}/index.m3u8`;
+function hlsPlaylist(cameraId, qualityId) {
+  return path.join(hlsDir(cameraId, qualityId), "index.m3u8");
+}
+
+function hlsPlaylistUrl(cameraId, qualityId) {
+  return `/streams/live-${cameraId}-${qualityId}/index.m3u8`;
 }
 
 function ensureHlsRoot() {
@@ -140,7 +165,7 @@ function streamCorsHeaders(req) {
   };
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
 function broadcast(state, chunk) {
   for (const client of state.wsClients) {
     if (client.readyState === 1) {
@@ -159,7 +184,7 @@ function broadcast(state, chunk) {
   }
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
 function clearWsClients(state) {
   for (const client of state.wsClients) {
     client.close();
@@ -167,7 +192,7 @@ function clearWsClients(state) {
   state.wsClients.clear();
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
 function clearHttpClients(state) {
   for (const client of state.httpClients) {
     if (!client.writableEnded) client.end();
@@ -175,7 +200,12 @@ function clearHttpClients(state) {
   state.httpClients.clear();
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
+export function countLocalMpegtsClients(state) {
+  return state.wsClients.size + state.httpClients.size;
+}
+
+/** @param {QualityStreamState} state */
 function destroyOutputStream(state) {
   if (state.outputStream) {
     state.outputStream.removeAllListeners();
@@ -184,7 +214,12 @@ function destroyOutputStream(state) {
   }
 }
 
-function buildFfmpeg(source, cameraId, { mode, transcode, quality }) {
+function buildFfmpeg(
+  source,
+  cameraId,
+  qualityId,
+  { mode, transcode, quality },
+) {
   const inputOptions =
     INPUT_PROFILES[quality.inputProfile] ?? INPUT_PROFILES.lowLatency;
   const cmd = ffmpeg(source).inputOptions(inputOptions).noAudio();
@@ -215,7 +250,7 @@ function buildFfmpeg(source, cameraId, { mode, transcode, quality }) {
       .addOutputOption("-muxpreload", "0");
   }
 
-  const playlist = hlsPlaylist(cameraId);
+  const playlist = hlsPlaylist(cameraId, qualityId);
   return cmd
     .outputOptions([
       "-f",
@@ -227,7 +262,7 @@ function buildFfmpeg(source, cameraId, { mode, transcode, quality }) {
       "-hls_flags",
       "delete_segments+append_list+omit_endlist+program_date_time+independent_segments",
       "-hls_segment_filename",
-      path.join(hlsDir(cameraId), "segment_%03d.ts"),
+      path.join(hlsDir(cameraId, qualityId), "segment_%03d.ts"),
     ])
     .output(playlist);
 }
@@ -261,7 +296,7 @@ function buildRtspPushFfmpeg(source, publishUrl, quality, transcode) {
     .output(publishUrl);
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
 async function startRtspPushStream(state, source, pathName, quality) {
   const publishUrl = getRtspPublishUrl(pathName);
 
@@ -291,7 +326,7 @@ async function startRtspPushStream(state, source, pathName, quality) {
   }
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
 async function stopFfmpegProcess(state) {
   if (!state.ffmpegProcess) return;
 
@@ -306,8 +341,8 @@ async function stopFfmpegProcess(state) {
   });
 }
 
-/** @param {CameraStreamState} state */
-function launchFfmpeg(state, cmd, { output, cameraId } = {}) {
+/** @param {QualityStreamState} state */
+function launchFfmpeg(state, cmd, { output } = {}) {
   return new Promise((resolveStart, reject) => {
     state.ffmpegProcess = cmd
       .on("start", () => resolveStart())
@@ -327,8 +362,8 @@ function launchFfmpeg(state, cmd, { output, cameraId } = {}) {
   });
 }
 
-async function waitForPlaylist(cameraId, maxWaitMs = 20000) {
-  const playlist = hlsPlaylist(cameraId);
+async function waitForPlaylist(cameraId, qualityId, maxWaitMs = 20000) {
+  const playlist = hlsPlaylist(cameraId, qualityId);
   const deadline = Date.now() + maxWaitMs;
 
   while (Date.now() < deadline) {
@@ -349,8 +384,8 @@ async function waitForPlaylist(cameraId, maxWaitMs = 20000) {
   );
 }
 
-/** @param {CameraStreamState} state */
-async function startMpegtsStream(state, cameraId, source, quality) {
+/** @param {QualityStreamState} state */
+async function startMpegtsStream(state, cameraId, qualityId, source, quality) {
   destroyOutputStream(state);
   state.outputStream = new PassThrough({ highWaterMark: 1024 * 512 });
   state.outputStream.on("data", (chunk) => broadcast(state, chunk));
@@ -358,8 +393,12 @@ async function startMpegtsStream(state, cameraId, source, quality) {
   const tryStart = (transcode) =>
     launchFfmpeg(
       state,
-      buildFfmpeg(source, cameraId, { mode: "mpegts", transcode, quality }),
-      { output: state.outputStream, cameraId },
+      buildFfmpeg(source, cameraId, qualityId, {
+        mode: "mpegts",
+        transcode,
+        quality,
+      }),
+      { output: state.outputStream },
     );
 
   if (quality.transcodePolicy === "transcode") {
@@ -385,22 +424,25 @@ async function startMpegtsStream(state, cameraId, source, quality) {
   }
 }
 
-/** @param {CameraStreamState} state */
-async function startHlsStream(state, cameraId, source, quality) {
-  await rm(hlsDir(cameraId), { recursive: true, force: true });
-  await mkdir(hlsDir(cameraId), { recursive: true });
+/** @param {QualityStreamState} state */
+async function startHlsStream(state, cameraId, qualityId, source, quality) {
+  await rm(hlsDir(cameraId, qualityId), { recursive: true, force: true });
+  await mkdir(hlsDir(cameraId, qualityId), { recursive: true });
 
   const startWith = async (transcode) =>
     launchFfmpeg(
       state,
-      buildFfmpeg(source, cameraId, { mode: "hls", transcode, quality }),
-      { cameraId },
+      buildFfmpeg(source, cameraId, qualityId, {
+        mode: "hls",
+        transcode,
+        quality,
+      }),
     );
 
   if (quality.transcodePolicy === "transcode") {
     await startWith(true);
     state.transcodeMode = true;
-    await waitForPlaylist(cameraId);
+    await waitForPlaylist(cameraId, qualityId);
     return;
   }
 
@@ -413,10 +455,10 @@ async function startHlsStream(state, cameraId, source, quality) {
     state.transcodeMode = true;
   }
 
-  await waitForPlaylist(cameraId);
+  await waitForPlaylist(cameraId, qualityId);
 }
 
-/** @param {CameraStreamState} state */
+/** @param {QualityStreamState} state */
 function isStreaming(state) {
   if (state.localFallback) return state.ffmpegProcess !== null;
   if (config.streamMode === "webrtc") {
@@ -428,12 +470,12 @@ function isStreaming(state) {
   return state.ffmpegProcess !== null;
 }
 
-function mpegtsWsUrl(cameraId) {
-  return `/cameras/${cameraId}/stream/ws`;
+function mpegtsWsUrl(cameraId, qualityId) {
+  return `/cameras/${cameraId}/stream/ws?quality=${encodeURIComponent(qualityId)}`;
 }
 
-function resolveMpegtsPlayUrl(cameraId, clientContext) {
-  const wsPath = mpegtsWsUrl(cameraId);
+function resolveMpegtsPlayUrl(cameraId, qualityId, clientContext) {
+  const wsPath = mpegtsWsUrl(cameraId, qualityId);
   const publicBase = resolvePublicWsBaseUrl(clientContext)?.replace(/\/$/, "");
   if (publicBase) {
     return `${publicBase}${wsPath}`;
@@ -441,40 +483,41 @@ function resolveMpegtsPlayUrl(cameraId, clientContext) {
   return wsPath;
 }
 
-async function startLocalMpegtsFallback(state, cameraId, source, quality) {
-  if (!ffmpegPath) {
-    throw new Error(
-      `MediaMTX không khả dụng và không tìm thấy ffmpeg để relay local. ${getFfmpegInstallHint()}`,
-    );
-  }
-  await startMpegtsStream(state, cameraId, source, quality);
-  state.localFallback = true;
-  state.mtxActive = false;
+/** @param {ReturnType<typeof findCameraById>} camera @param {StreamQualityId} qualityId */
+function resolveMtxPathName(camera, qualityId) {
+  return resolveQualityPath(camera.mediamtx_path, qualityId);
 }
 
-/** @param {CameraStreamState} state @param {ReturnType<typeof findCameraById>} camera */
-function getStreamQualityState(state, camera) {
-  const preset = getStreamQualityPreset(state.qualityId);
+/** @param {QualityStreamState} state @param {ReturnType<typeof findCameraById>} camera @param {StreamQualityId} qualityId */
+function getStreamQualityState(state, camera, qualityId) {
+  const preset = getStreamQualityPreset(qualityId);
   return {
-    quality: state.qualityId,
+    quality: qualityId,
     label: preset.label,
     description: preset.description,
     options: listStreamQualityOptionsForCamera(camera),
   };
 }
 
-export function getStreamStatus(cameraId, clientContext) {
+/** @param {number} cameraId @param {StreamQualityId} qualityId @param {import('../utils/webrtc-client-url.js').ClientContext} [clientContext] */
+export function getStreamStatus(cameraId, clientContext, qualityId) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const state = getOrCreateState(cameraId);
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  const state = getOrCreateQualityState(cameraId, resolvedQuality);
   const streaming = isStreaming(state);
-  const qualityState = getStreamQualityState(state, camera);
+  const qualityState = getStreamQualityState(state, camera, resolvedQuality);
+  const mtxPath = resolveMtxPathName(camera, resolvedQuality);
 
   if (state.localFallback) {
-    const wsUrl = resolveMpegtsPlayUrl(cameraId, clientContext);
+    const wsUrl = resolveMpegtsPlayUrl(
+      cameraId,
+      resolvedQuality,
+      clientContext,
+    );
     return {
       streaming,
       mode: "mpegts",
@@ -485,12 +528,13 @@ export function getStreamStatus(cameraId, clientContext) {
       ws_url: wsUrl,
       fallback: true,
       mediamtx_available: false,
+      mediamtx_path: mtxPath,
       ...qualityState,
     };
   }
 
   if (config.streamMode === "webrtc") {
-    const whepUrl = getWhepUrl(camera.mediamtx_path, clientContext);
+    const whepUrl = getWhepUrl(mtxPath, clientContext);
     const rtspConfigured = Boolean(state.currentRtspUrl);
     const pushEnabled = isRtspPushEnabled();
     return {
@@ -498,9 +542,9 @@ export function getStreamStatus(cameraId, clientContext) {
       mode: "webrtc",
       rtsp_configured: rtspConfigured,
       stream_type: "webrtc",
-      stream_url: getWebRtcPageUrl(camera.mediamtx_path, clientContext),
-      whep_url: rtspConfigured ? whepUrl : null,
-      mediamtx_path: camera.mediamtx_path,
+      stream_url: getWebRtcPageUrl(mtxPath, clientContext),
+      whep_url: rtspConfigured || state.mtxActive ? whepUrl : null,
+      mediamtx_path: mtxPath,
       mtx_registered: state.mtxActive,
       rtsp_push: pushEnabled,
       mtx_publishing: pushEnabled && state.ffmpegProcess !== null,
@@ -510,7 +554,7 @@ export function getStreamStatus(cameraId, clientContext) {
   }
 
   if (config.streamMode === "hls") {
-    const playlist = hlsPlaylistUrl(cameraId);
+    const playlist = hlsPlaylistUrl(cameraId, resolvedQuality);
     return {
       streaming,
       mode: "hls",
@@ -519,11 +563,12 @@ export function getStreamStatus(cameraId, clientContext) {
       stream_type: "hls",
       stream_url: playlist,
       playlist: streaming ? playlist : null,
+      mediamtx_path: mtxPath,
       ...qualityState,
     };
   }
 
-  const wsUrl = mpegtsWsUrl(cameraId);
+  const wsUrl = mpegtsWsUrl(cameraId, resolvedQuality);
   return {
     streaming,
     mode: "mpegts",
@@ -532,30 +577,43 @@ export function getStreamStatus(cameraId, clientContext) {
     stream_type: "mpegts",
     stream_url: wsUrl,
     ws_url: streaming ? wsUrl : null,
+    mediamtx_path: mtxPath,
     ...qualityState,
   };
 }
 
-export async function startCameraStream(cameraId, clientContext) {
+async function startQualityStreamInternal(cameraId, qualityId, clientContext) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const state = getOrCreateState(cameraId);
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  const state = getOrCreateQualityState(cameraId, resolvedQuality);
+  const mtxPath = resolveMtxPathName(camera, resolvedQuality);
+  state.mtxPathName = mtxPath;
+  state.idleSince = null;
 
-  // Start mới: luôn thử MediaMTX trung tâm trước, không giữ fallback cũ
-  if (state.localFallback && config.streamMode === "webrtc") {
-    await stopCameraStream(cameraId);
-  } else if (isStreaming(state)) {
+  if (state.startingPromise) {
+    await state.startingPromise;
+    if (isStreaming(state)) {
+      return {
+        ok: true,
+        alreadyRunning: true,
+        ...getStreamStatus(cameraId, clientContext, resolvedQuality),
+      };
+    }
+  }
+
+  if (isStreaming(state)) {
     return {
       ok: true,
       alreadyRunning: true,
-      ...getStreamStatus(cameraId, clientContext),
+      ...getStreamStatus(cameraId, clientContext, resolvedQuality),
     };
   }
 
-  const quality = getStreamQualityPreset(state.qualityId);
+  const quality = getStreamQualityPreset(resolvedQuality);
   const source = await resolveRtspUrl(cameraId, quality.subtype);
   if (!source) {
     throw new Error("Không tìm thấy RTSP URL cho camera");
@@ -563,119 +621,176 @@ export async function startCameraStream(cameraId, clientContext) {
 
   state.currentRtspUrl = source;
 
-  if (config.streamMode === "webrtc") {
-    state.localFallback = false;
+  const startTask = async () => {
+    if (config.streamMode === "webrtc") {
+      state.localFallback = false;
 
-    if (isRtspPushEnabled()) {
-      if (!ffmpegPath) {
-        throw new Error(
-          `Cần ffmpeg để push RTSP lên MediaMTX. ${getFfmpegInstallHint()}`,
-        );
-      }
+      if (isRtspPushEnabled()) {
+        if (!ffmpegPath) {
+          throw new Error(
+            `Cần ffmpeg để push RTSP lên MediaMTX. ${getFfmpegInstallHint()}`,
+          );
+        }
 
-      try {
-        await ensurePathPublisher(camera.mediamtx_path);
-        state.mtxActive = true;
-        await startRtspPushStream(state, source, camera.mediamtx_path, quality);
-        await waitPathOnline(camera.mediamtx_path, 20_000);
-      } catch (err) {
-        console.warn(
-          `[stream] RTSP push failed for camera ${cameraId}:`,
-          err instanceof Error ? err.message : err,
-        );
-        await stopFfmpegProcess(state);
-        if (state.mtxActive) {
-          try {
-            await clearPathSource(camera.mediamtx_path);
-          } catch {
-            /* ignore */
+        try {
+          await ensurePathPublisher(mtxPath);
+          state.mtxActive = true;
+          await startRtspPushStream(state, source, mtxPath, quality);
+          await waitPathOnline(mtxPath, 20_000);
+        } catch (err) {
+          console.warn(
+            `[stream] RTSP push failed camera ${cameraId} quality ${resolvedQuality}:`,
+            err instanceof Error ? err.message : err,
+          );
+          await stopFfmpegProcess(state);
+          if (state.mtxActive) {
+            try {
+              await clearPathSource(mtxPath);
+            } catch {
+              /* ignore */
+            }
+            state.mtxActive = false;
           }
+          throw err instanceof Error
+            ? err
+            : new Error("Không push được stream lên MediaMTX");
+        }
+      } else {
+        try {
+          await ensurePathSource(mtxPath, source);
+          state.mtxActive = true;
+        } catch (err) {
+          console.warn(
+            `[stream] MediaMTX path register failed camera ${cameraId} quality ${resolvedQuality}:`,
+            err instanceof Error ? err.message : err,
+          );
           state.mtxActive = false;
         }
-        throw err instanceof Error
-          ? err
-          : new Error("Không push được stream lên MediaMTX");
       }
     } else {
-      try {
-        await ensurePathSource(camera.mediamtx_path, source);
-        state.mtxActive = true;
-      } catch (err) {
-        console.warn(
-          `[stream] MediaMTX path register failed for camera ${cameraId}:`,
-          err instanceof Error ? err.message : err,
+      if (!ffmpegPath) {
+        throw new Error(
+          `Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`,
         );
-        state.mtxActive = false;
+      }
+
+      if (config.streamMode === "hls") {
+        await startHlsStream(state, cameraId, resolvedQuality, source, quality);
+      } else {
+        await startMpegtsStream(
+          state,
+          cameraId,
+          resolvedQuality,
+          source,
+          quality,
+        );
       }
     }
-  } else {
-    if (!ffmpegPath) {
-      throw new Error(
-        `Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`,
-      );
-    }
+  };
 
-    if (config.streamMode === "hls") {
-      await startHlsStream(state, cameraId, source, quality);
-    } else {
-      await startMpegtsStream(state, cameraId, source, quality);
-    }
+  state.startingPromise = startTask();
+  try {
+    await state.startingPromise;
+  } finally {
+    state.startingPromise = null;
   }
 
   return {
     ok: true,
     alreadyRunning: false,
-    ...getStreamStatus(cameraId, clientContext),
+    ...getStreamStatus(cameraId, clientContext, resolvedQuality),
   };
+}
+
+export async function startCameraStream(cameraId, clientContext, qualityId) {
+  return startQualityStreamInternal(cameraId, qualityId, clientContext);
+}
+
+async function startLocalMpegtsFallback(
+  state,
+  cameraId,
+  qualityId,
+  source,
+  quality,
+) {
+  if (!ffmpegPath) {
+    throw new Error(
+      `MediaMTX không khả dụng và không tìm thấy ffmpeg để relay local. ${getFfmpegInstallHint()}`,
+    );
+  }
+  await startMpegtsStream(state, cameraId, qualityId, source, quality);
+  state.localFallback = true;
+  state.mtxActive = false;
 }
 
 async function activateLocalMpegtsFallback(
   state,
   camera,
   cameraId,
+  qualityId,
   source,
   quality,
 ) {
-  try {
-    await clearPathSource(camera.mediamtx_path);
-  } catch {
-    /* path có thể chưa tồn tại */
+  const mtxPath = resolveMtxPathName(camera, qualityId);
+  if (state.mtxActive) {
+    try {
+      await clearPathSource(mtxPath);
+    } catch {
+      /* path có thể chưa tồn tại */
+    }
+    state.mtxActive = false;
   }
-  state.mtxActive = false;
-  await startLocalMpegtsFallback(state, cameraId, source, quality);
+  await stopFfmpegProcess(state);
+  await startLocalMpegtsFallback(state, cameraId, qualityId, source, quality);
 }
 
-export async function stopCameraStream(cameraId) {
+/** @param {number} cameraId @param {StreamQualityId} qualityId */
+export async function stopQualityStream(cameraId, qualityId) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const state = getOrCreateState(cameraId);
+  const resolvedQuality = resolveStreamQualityId(qualityId);
+  const byQuality = streams.get(cameraId);
+  const state = byQuality?.get(resolvedQuality);
+  if (!state) {
+    return { ok: true, stopped: false, quality: resolvedQuality };
+  }
+
+  state.idleSince = null;
+  const mtxPath =
+    state.mtxPathName || resolveMtxPathName(camera, resolvedQuality);
 
   if (state.localFallback) {
     if (!state.ffmpegProcess) {
       state.localFallback = false;
       state.currentRtspUrl = null;
-      return { ok: true, stopped: false };
+      byQuality.delete(resolvedQuality);
+      if (byQuality.size === 0) streams.delete(cameraId);
+      return { ok: true, stopped: false, quality: resolvedQuality };
     }
 
     clearWsClients(state);
     clearHttpClients(state);
 
-    return new Promise((resolve) => {
+    await new Promise((resolve) => {
       const proc = state.ffmpegProcess;
       state.ffmpegProcess = null;
       state.localFallback = false;
       state.currentRtspUrl = null;
       state.transcodeMode = false;
+      state.mtxPathName = null;
       destroyOutputStream(state);
 
-      proc.on("end", () => resolve({ ok: true, stopped: true }));
+      proc.on("end", () => resolve());
       proc.kill("SIGTERM");
-
-      setTimeout(() => resolve({ ok: true, stopped: true }), 2000);
+      setTimeout(() => resolve(), 2000);
     });
+
+    byQuality.delete(resolvedQuality);
+    if (byQuality.size === 0) streams.delete(cameraId);
+    return { ok: true, stopped: true, quality: resolvedQuality };
   }
 
   if (config.streamMode === "webrtc") {
@@ -683,7 +798,9 @@ export async function stopCameraStream(cameraId) {
     const hadMtx = state.mtxActive;
 
     if (!hadPush && !hadMtx) {
-      return { ok: true, stopped: false };
+      byQuality.delete(resolvedQuality);
+      if (byQuality.size === 0) streams.delete(cameraId);
+      return { ok: true, stopped: false, quality: resolvedQuality };
     }
 
     if (hadPush) {
@@ -692,7 +809,7 @@ export async function stopCameraStream(cameraId) {
 
     if (hadMtx) {
       try {
-        await clearPathSource(camera.mediamtx_path);
+        await clearPathSource(mtxPath);
       } catch {
         /* path có thể đã bị xóa */
       }
@@ -700,44 +817,78 @@ export async function stopCameraStream(cameraId) {
     }
 
     state.currentRtspUrl = null;
-    return { ok: true, stopped: true };
+    state.mtxPathName = null;
+    byQuality.delete(resolvedQuality);
+    if (byQuality.size === 0) streams.delete(cameraId);
+    return { ok: true, stopped: true, quality: resolvedQuality };
   }
 
   if (!state.ffmpegProcess) {
-    return { ok: true, stopped: false };
+    byQuality.delete(resolvedQuality);
+    if (byQuality.size === 0) streams.delete(cameraId);
+    return { ok: true, stopped: false, quality: resolvedQuality };
   }
 
   clearWsClients(state);
   clearHttpClients(state);
 
-  return new Promise((resolve) => {
+  await new Promise((resolve) => {
     const proc = state.ffmpegProcess;
     state.ffmpegProcess = null;
     state.currentRtspUrl = null;
     state.transcodeMode = false;
+    state.mtxPathName = null;
     destroyOutputStream(state);
 
-    proc.on("end", () => resolve({ ok: true, stopped: true }));
+    proc.on("end", () => resolve());
     proc.kill("SIGTERM");
-
-    setTimeout(() => resolve({ ok: true, stopped: true }), 2000);
+    setTimeout(() => resolve(), 2000);
   });
+
+  byQuality.delete(resolvedQuality);
+  if (byQuality.size === 0) streams.delete(cameraId);
+  return { ok: true, stopped: true, quality: resolvedQuality };
 }
 
-export async function restartCameraStream(cameraId, clientContext) {
-  await stopCameraStream(cameraId);
-  return startCameraStream(cameraId, clientContext);
+export async function stopCameraStream(cameraId, qualityId) {
+  if (qualityId) {
+    return stopQualityStream(cameraId, qualityId);
+  }
+
+  const byQuality = streams.get(cameraId);
+  if (!byQuality || byQuality.size === 0) {
+    return { ok: true, stopped: false };
+  }
+
+  for (const q of [...byQuality.keys()]) {
+    await stopQualityStream(cameraId, q);
+  }
+  return { ok: true, stopped: true };
 }
 
-/** Ép relay MPEG-TS local (backup khi MediaMTX trung tâm không phát được). */
-export async function forceCameraStreamFallback(cameraId, clientContext) {
+export async function restartCameraStream(cameraId, clientContext, qualityId) {
+  const camera = findCameraById(cameraId);
+  if (!camera) {
+    throw new Error("Không tìm thấy camera");
+  }
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  await stopQualityStream(cameraId, resolvedQuality);
+  return startQualityStreamInternal(cameraId, resolvedQuality, clientContext);
+}
+
+export async function forceCameraStreamFallback(
+  cameraId,
+  clientContext,
+  qualityId,
+) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const state = getOrCreateState(cameraId);
-  const quality = getStreamQualityPreset(state.qualityId);
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  const state = getOrCreateQualityState(cameraId, resolvedQuality);
+  const quality = getStreamQualityPreset(resolvedQuality);
   const source =
     state.currentRtspUrl || (await resolveRtspUrl(cameraId, quality.subtype));
   if (!source) {
@@ -745,25 +896,41 @@ export async function forceCameraStreamFallback(cameraId, clientContext) {
   }
 
   state.currentRtspUrl = source;
+  state.mtxPathName = resolveMtxPathName(camera, resolvedQuality);
 
   if (state.localFallback && state.ffmpegProcess) {
     return {
       ok: true,
       alreadyRunning: true,
-      ...getStreamStatus(cameraId, clientContext),
+      ...getStreamStatus(cameraId, clientContext, resolvedQuality),
     };
   }
 
   if (state.mtxActive || state.ffmpegProcess) {
-    await stopCameraStream(cameraId);
+    await stopFfmpegProcess(state);
+    if (state.mtxActive) {
+      try {
+        await clearPathSource(state.mtxPathName);
+      } catch {
+        /* ignore */
+      }
+      state.mtxActive = false;
+    }
   }
 
-  await activateLocalMpegtsFallback(state, camera, cameraId, source, quality);
+  await activateLocalMpegtsFallback(
+    state,
+    camera,
+    cameraId,
+    resolvedQuality,
+    source,
+    quality,
+  );
 
   return {
     ok: true,
     alreadyRunning: false,
-    ...getStreamStatus(cameraId, clientContext),
+    ...getStreamStatus(cameraId, clientContext, resolvedQuality),
   };
 }
 
@@ -773,42 +940,64 @@ export async function setStreamQuality(cameraId, qualityId, clientContext) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const state = getOrCreateState(cameraId);
-  const nextId = pickStreamQualityForCamera(camera, qualityId);
-  const changed = nextId !== state.qualityId;
-  state.qualityId = nextId;
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  const streamResult = await startQualityStreamInternal(
+    cameraId,
+    resolvedQuality,
+    clientContext,
+  );
 
-  if (changed && isStreaming(state)) {
-    await restartCameraStream(cameraId, clientContext);
-  }
-
-  return getStreamQualityState(state, camera);
+  return {
+    ...getStreamQualityState(
+      getOrCreateQualityState(cameraId, resolvedQuality),
+      camera,
+      resolvedQuality,
+    ),
+    ...streamResult,
+  };
 }
 
-export function addWsClient(cameraId, socket) {
-  const state = getOrCreateState(cameraId);
+export function addWsClient(cameraId, socket, qualityId) {
+  const camera = findCameraById(cameraId);
+  if (!camera) {
+    socket.close(1008, "Không tìm thấy camera");
+    return;
+  }
+
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  const state = getOrCreateQualityState(cameraId, resolvedQuality);
   const mpegtsAllowed =
     config.streamMode === "mpegts" ||
     state.localFallback ||
     state.outputStream !== null;
+
   if (!isStreaming(state) || !mpegtsAllowed) {
     socket.close(1013, "Stream chưa chạy");
     return;
   }
 
+  state.idleSince = null;
   state.wsClients.add(socket);
   socket.on("close", () => state.wsClients.delete(socket));
   socket.on("error", () => state.wsClients.delete(socket));
 }
 
-export async function attachMpegTsClient(cameraId, reply, request) {
-  const state = getOrCreateState(cameraId);
+export async function attachMpegTsClient(cameraId, reply, request, qualityId) {
+  const camera = findCameraById(cameraId);
+  if (!camera) {
+    throw new Error("Không tìm thấy camera");
+  }
+
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
   const clientContext = clientContextFromRequest(request);
+  const state = getOrCreateQualityState(cameraId, resolvedQuality);
+
   if (!isStreaming(state)) {
-    await startCameraStream(cameraId, clientContext);
+    await startQualityStreamInternal(cameraId, resolvedQuality, clientContext);
   }
 
   const res = reply.raw;
+  state.idleSince = null;
   state.httpClients.add(res);
 
   if (!res.headersSent) {
@@ -822,13 +1011,6 @@ export async function attachMpegTsClient(cameraId, reply, request) {
 
   res.on("close", () => {
     state.httpClients.delete(res);
-    if (
-      state.httpClients.size === 0 &&
-      state.wsClients.size === 0 &&
-      isStreaming(state)
-    ) {
-      void stopCameraStream(cameraId);
-    }
   });
 }
 
@@ -838,8 +1020,9 @@ export async function ensureMpegtsRelayStream(cameraId) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const state = getOrCreateState(cameraId);
-  const wsUrl = `/cameras/${cameraId}/stream/ws`;
+  const qualityId = "mobile";
+  const state = getOrCreateQualityState(cameraId, qualityId);
+  const wsUrl = mpegtsWsUrl(cameraId, qualityId);
 
   if (state.outputStream && state.ffmpegProcess) {
     return {
@@ -849,11 +1032,11 @@ export async function ensureMpegtsRelayStream(cameraId) {
       ws_url: wsUrl,
       stream_url: wsUrl,
       relay: true,
+      quality: qualityId,
     };
   }
 
-  const quality = getStreamQualityPreset("mobile");
-  state.qualityId = "mobile";
+  const quality = getStreamQualityPreset(qualityId);
   const source =
     state.currentRtspUrl || (await resolveRtspUrl(cameraId, quality.subtype));
   if (!source) {
@@ -865,7 +1048,7 @@ export async function ensureMpegtsRelayStream(cameraId) {
     throw new Error(`Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`);
   }
 
-  await startMpegtsStream(state, cameraId, source, quality);
+  await startMpegtsStream(state, cameraId, qualityId, source, quality);
 
   return {
     ok: true,
@@ -879,21 +1062,41 @@ export async function ensureMpegtsRelayStream(cameraId) {
   };
 }
 
-export function getStreamQualityForCamera(cameraId) {
+export function getStreamQualityForCamera(cameraId, qualityId) {
   const camera = findCameraById(cameraId);
   if (!camera) {
     throw new Error("Không tìm thấy camera");
   }
-  const state = getOrCreateState(cameraId);
-  return getStreamQualityState(state, camera);
+  const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  const state = getOrCreateQualityState(cameraId, resolvedQuality);
+  return getStreamQualityState(state, camera, resolvedQuality);
 }
 
-export function getStreamInfo(cameraId, clientContext) {
-  return getStreamStatus(cameraId, clientContext);
+export function getStreamInfo(cameraId, clientContext, qualityId) {
+  return getStreamStatus(cameraId, clientContext, qualityId);
+}
+
+export function getLifecycleTargets() {
+  /** @type {Array<{ cameraId: number, qualityId: StreamQualityId, state: QualityStreamState, mtxPathName: string | null }>} */
+  const targets = [];
+
+  for (const [cameraId, byQuality] of streams) {
+    for (const [qualityId, state] of byQuality) {
+      if (!isStreaming(state)) continue;
+      targets.push({
+        cameraId,
+        qualityId,
+        state,
+        mtxPathName: state.mtxPathName,
+      });
+    }
+  }
+
+  return targets;
 }
 
 export function stopAllStreams() {
-  for (const cameraId of streams.keys()) {
+  for (const cameraId of [...streams.keys()]) {
     void stopCameraStream(cameraId);
   }
 }
@@ -908,9 +1111,13 @@ export async function initStreamService() {
         err instanceof Error ? err.message : err,
       );
     }
-    return;
+  } else {
+    ensureHlsRoot();
   }
-  ensureHlsRoot();
+
+  const { startStreamLifecyclePoller } =
+    await import("./stream-lifecycle.service.js");
+  startStreamLifecyclePoller();
 }
 
 export function getHlsOutputDir() {
@@ -923,3 +1130,5 @@ export function previewRtspUrl(cameraId, subtype = 0) {
   if (!camera) return null;
   return maskRtspUrl(buildRtspUrl(camera, subtype));
 }
+
+export { clientContextFromRequest };

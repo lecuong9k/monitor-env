@@ -27,6 +27,41 @@ async function mtxFetch(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
+const QUALITY_SUFFIX_RE = /-(main|sub|mobile)$/;
+
+/** @param {string} basePath @param {string} qualityId */
+export function resolveQualityPath(basePath, qualityId) {
+  const base = String(basePath || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(QUALITY_SUFFIX_RE, "");
+  const q = String(qualityId || "main")
+    .trim()
+    .toLowerCase();
+  if (!base) {
+    throw new Error("mediamtx_path không hợp lệ");
+  }
+  return `${base}-${q}`;
+}
+
+/** @param {string} pathName */
+export async function getPathStats(pathName) {
+  try {
+    return await mtxFetch(`/v3/paths/get/${encodeURIComponent(pathName)}`);
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+/** @param {Record<string, unknown> | null | undefined} pathStats */
+export function countPathReaders(pathStats) {
+  if (!pathStats) return 0;
+  if (Array.isArray(pathStats.readers)) return pathStats.readers.length;
+  if (typeof pathStats.readerCount === "number") return pathStats.readerCount;
+  return 0;
+}
+
 /** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
 export function getWhepUrl(pathName, clientContext) {
   const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");

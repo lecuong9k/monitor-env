@@ -87,4 +87,7 @@ export const config = {
      */
     rtspPublishUrl: resolveRtspPublishUrl(),
   },
+  /** Dừng upstream quality path sau N ms không còn MediaMTX reader (0 = tắt). */
+  streamIdleStopMs: Number(process.env.STREAM_IDLE_STOP_MS) || 300_000,
+  streamIdlePollMs: Number(process.env.STREAM_IDLE_POLL_MS) || 60_000,
 };
