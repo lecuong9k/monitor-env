@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# Deploy MiniPC (monitor-env-be) — mô hình Edge + MediaMTX trung tâm
+# Deploy MiniPC (monitor-env-be) — mô hình Edge + RTSP push lên MediaMTX VPS
 #
 # MiniPC chạy:
-#   - camera-service (:4001) — PTZ, đẩy RTSP lên MediaMTX trên server Mbox
+#   - camera-service (:4001) — FFmpeg pull camera LAN → RTSP push :8554
 #   - monitor-env (:3000)   — edge agent WebSocket outbound → Mbox /edge/ws
 #
 # KHÔNG deploy MediaMTX trên MiniPC (video qua server Mbox).
@@ -68,6 +68,34 @@ mediamtx_api_base() {
   printf '%s' "${MEDIAMTX_API_URL%/}"
 }
 
+mediamtx_rtsp_publish_endpoint() {
+  local url=${MEDIAMTX_RTSP_PUBLISH_URL:-}
+  if [ -z "$url" ]; then
+    local api_host
+    api_host="$(printf '%s' "${MEDIAMTX_API_URL}" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+    if [ -n "$api_host" ]; then
+      printf 'rtsp://%s:8554' "$api_host"
+      return 0
+    fi
+    return 1
+  fi
+  printf '%s' "${url%/}"
+}
+
+mediamtx_rtsp_publish_host_port() {
+  local endpoint hostport
+  endpoint="$(mediamtx_rtsp_publish_endpoint)" || return 1
+  if [[ "$endpoint" =~ ^rtsp://([^/:]+):([0-9]+) ]]; then
+    printf '%s %s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+    return 0
+  fi
+  if [[ "$endpoint" =~ ^rtsp://([^/:]+)$ ]]; then
+    printf '%s 8554' "${BASH_REMATCH[1]}"
+    return 0
+  fi
+  return 1
+}
+
 check_required_env() {
   local missing=0
   local var
@@ -95,6 +123,10 @@ check_required_env() {
 
   if [ "${STREAM_MODE:-webrtc}" != "webrtc" ]; then
     warn "STREAM_MODE=${STREAM_MODE:-} — production khuyến nghị webrtc + MediaMTX trung tâm"
+  fi
+
+  if [ "${STREAM_MODE:-webrtc}" = "webrtc" ] && ! mediamtx_rtsp_publish_endpoint >/dev/null 2>&1; then
+    warn "Chưa cấu hình MEDIAMTX_RTSP_PUBLISH_URL — sẽ dùng chế độ pull (VPS phải reach camera LAN)"
   fi
 }
 
@@ -139,6 +171,20 @@ preflight_remote_services() {
     fi
   else
     warn "Không gọi được ${mbox_http}/api/edge/status — kiểm tra Mbox và outbound WS"
+  fi
+
+  if read -r rtsp_host rtsp_port < <(mediamtx_rtsp_publish_host_port 2>/dev/null); then
+    if timeout 5 bash -c "echo >/dev/tcp/${rtsp_host}/${rtsp_port}" 2>/dev/null; then
+      echo "OK: MediaMTX RTSP publish (${rtsp_host}:${rtsp_port}) reachable từ MiniPC"
+    else
+      warn "MiniPC không kết nối được TCP ${rtsp_host}:${rtsp_port} — mở firewall VPS :8554 (chỉ IP MiniPC)"
+    fi
+  fi
+
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    warn "Chưa cài ffmpeg trên MiniPC — bắt buộc cho RTSP push"
+  else
+    echo "OK: ffmpeg $(ffmpeg -version 2>/dev/null | head -1 || true)"
   fi
 }
 
@@ -323,6 +369,7 @@ echo "MiniPC     : $(hostname 2>/dev/null || echo unknown)"
 echo "EDGE_ID    : ${EDGE_ID}"
 echo "Mbox WS    : ${MBOX_EDGE_WS_URL}"
 echo "MediaMTX   : ${MEDIAMTX_WEBRTC_URL} (WHEP)"
+echo "RTSP push  : $(mediamtx_rtsp_publish_endpoint 2>/dev/null || echo 'chưa cấu hình')"
 echo "Backup     : ${STAGING_BACKUP}"
 echo ""
 echo "Kiểm tra thêm:"
