@@ -32,7 +32,8 @@ Camera (LAN) ← pull on-demand ← MediaMTX local (:8889 WHEP) ← MiniPC UI
 ### 2) MediaMTX local
 
 ```bash
-# Cần binary ./mediamtx (tải từ bluenviron/mediamtx releases)
+# Binary phải tải TRÊN MiniPC Linux (không copy từ Mac — sẽ lỗi Exec format error)
+npm run mediamtx:install
 npm run mediamtx:prod   # hoặc PM2 ecosystem
 ```
 
