@@ -1,16 +1,13 @@
 import {
-  cameraStreamWsController,
   getCameraStreamOptionsController,
   getCameraStreamUrlController,
   listCamerasController,
-  liveMpegTsController,
   ptzController,
   restartCameraStreamController,
   startCameraStreamController,
   stopCameraStreamController,
   streamStatusController,
   updateCameraStreamQualityController,
-  forceCameraStreamFallbackController,
 } from "../controllers/camera.controller.js";
 import {
   createCameraController,
@@ -34,22 +31,8 @@ export default async function cameraRoutes(fastify) {
   fastify.post("/cameras/:id/stream/stop", stopCameraStreamController);
   fastify.post("/cameras/:id/stream/restart", restartCameraStreamController);
   fastify.post(
-    "/cameras/:id/stream/fallback",
-    forceCameraStreamFallbackController,
-  );
-  fastify.post(
     "/cameras/:id/stream/quality",
     updateCameraStreamQualityController,
-  );
-  fastify.get(
-    "/cameras/:id/stream/ws",
-    { websocket: true },
-    cameraStreamWsController,
-  );
-  fastify.get(
-    "/cameras/:id/stream/live.ts",
-    { config: { requestTimeout: 0 } },
-    liveMpegTsController,
   );
   fastify.post("/cameras/:id/ptz", ptzController);
 }

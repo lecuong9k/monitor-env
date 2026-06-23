@@ -1,10 +1,6 @@
 import { config } from "../config.js";
 import { countPathReaders, getPathStats } from "./mediamtx.service.js";
-import {
-  countLocalMpegtsClients,
-  getLifecycleTargets,
-  stopQualityStream,
-} from "./stream.service.js";
+import { getLifecycleTargets, stopQualityStream } from "./stream.service.js";
 
 /** @type {ReturnType<typeof setInterval> | null} */
 let poller = null;
@@ -14,47 +10,84 @@ let poller = null;
  */
 async function evaluateTarget(target) {
   const { cameraId, qualityId, state, mtxPathName } = target;
-  const idleStopMs = config.streamIdleStopMs;
-  if (idleStopMs <= 0) {
+
+  if (state.localViewerCount > 0 || state.remoteViewerCount > 0) {
     state.idleSince = null;
+    state.centralIdleSince = null;
     return;
   }
 
-  let readerCount = 0;
+  // Local ingest idle backup
+  if (state.localMtxActive && mtxPathName) {
+    const idleStopMs = config.streamIdleStopMs;
+    if (idleStopMs > 0) {
+      let readerCount = 0;
+      try {
+        const stats = await getPathStats("local", mtxPathName);
+        readerCount = countPathReaders(stats);
+      } catch (err) {
+        console.warn(
+          `[stream-lifecycle] Không đọc được local stats path ${mtxPathName}:`,
+          err instanceof Error ? err.message : err,
+        );
+        state.idleSince = null;
+      }
 
-  if (state.localFallback) {
-    readerCount = countLocalMpegtsClients(state);
-  } else if (mtxPathName) {
-    try {
-      const stats = await getPathStats(mtxPathName);
-      readerCount = countPathReaders(stats);
-    } catch (err) {
-      console.warn(
-        `[stream-lifecycle] Không đọc được stats path ${mtxPathName}:`,
-        err instanceof Error ? err.message : err,
-      );
-      state.idleSince = null;
-      return;
+      if (readerCount > 0) {
+        state.idleSince = null;
+      } else {
+        const now = Date.now();
+        if (state.idleSince == null) {
+          state.idleSince = now;
+        } else if (now - state.idleSince >= idleStopMs) {
+          console.log(
+            `[stream-lifecycle] Local idle stop camera ${cameraId} quality ${qualityId}`,
+          );
+          state.idleSince = null;
+          await stopQualityStream(cameraId, qualityId, { scope: "local" });
+          await stopQualityStream(cameraId, qualityId, { scope: "remote" });
+          return;
+        }
+      }
     }
   }
 
-  if (readerCount > 0) {
-    state.idleSince = null;
-    return;
-  }
+  // Central relay safety net (remote viewer count = 0)
+  if (state.centralRelayActive && mtxPathName) {
+    const relayIdleMs = config.centralRelayIdleStopMs;
+    if (relayIdleMs <= 0) return;
 
-  const now = Date.now();
-  if (state.idleSince == null) {
-    state.idleSince = now;
-    return;
-  }
+    let readerCount = 0;
+    try {
+      const stats = await getPathStats("central", mtxPathName);
+      readerCount = countPathReaders(stats);
+    } catch (err) {
+      console.warn(
+        `[stream-lifecycle] Không đọc được central stats path ${mtxPathName}:`,
+        err instanceof Error ? err.message : err,
+      );
+      state.centralIdleSince = null;
+      return;
+    }
 
-  if (now - state.idleSince >= idleStopMs) {
-    console.log(
-      `[stream-lifecycle] Idle stop camera ${cameraId} quality ${qualityId} (${idleStopMs}ms)`,
-    );
-    state.idleSince = null;
-    await stopQualityStream(cameraId, qualityId);
+    if (readerCount > 0) {
+      state.centralIdleSince = null;
+      return;
+    }
+
+    const now = Date.now();
+    if (state.centralIdleSince == null) {
+      state.centralIdleSince = now;
+      return;
+    }
+
+    if (now - state.centralIdleSince >= relayIdleMs) {
+      console.log(
+        `[stream-lifecycle] Central relay idle stop camera ${cameraId} quality ${qualityId}`,
+      );
+      state.centralIdleSince = null;
+      await stopQualityStream(cameraId, qualityId, { scope: "remote" });
+    }
   }
 }
 
@@ -66,7 +99,7 @@ async function pollOnce() {
 }
 
 export function startStreamLifecyclePoller() {
-  if (poller || config.streamIdleStopMs <= 0) return;
+  if (poller) return;
 
   const intervalMs = Math.max(config.streamIdlePollMs, 15_000);
   poller = setInterval(() => {
@@ -83,7 +116,7 @@ export function startStreamLifecyclePoller() {
   }
 
   console.log(
-    `[stream-lifecycle] Poller started (poll=${intervalMs}ms, idle=${config.streamIdleStopMs}ms)`,
+    `[stream-lifecycle] Poller started (poll=${intervalMs}ms, localIdle=${config.streamIdleStopMs}ms, centralRelayIdle=${config.centralRelayIdleStopMs}ms)`,
   );
 }
 

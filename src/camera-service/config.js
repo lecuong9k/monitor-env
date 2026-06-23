@@ -1,5 +1,6 @@
 import path from "path";
 import { fileURLToPath } from "url";
+import os from "os";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const beRoot = path.join(__dirname, "..", "..");
@@ -30,12 +31,16 @@ function parseOriginMap(raw) {
   return map;
 }
 
-/** rtsp://host:8554 — MiniPC FFmpeg push stream lên MediaMTX VPS. */
-function resolveRtspPublishUrl() {
-  const explicit = process.env.MEDIAMTX_RTSP_PUBLISH_URL?.trim();
+/** rtsp://host:8554 — FFmpeg relay lên MediaMTX central. */
+function resolveCentralRtspPublishUrl() {
+  const explicit =
+    process.env.MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL?.trim() ||
+    process.env.MEDIAMTX_RTSP_PUBLISH_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
 
-  const apiUrl = process.env.MEDIAMTX_API_URL?.trim();
+  const apiUrl =
+    process.env.MEDIAMTX_CENTRAL_API_URL?.trim() ||
+    process.env.MEDIAMTX_API_URL?.trim();
   if (!apiUrl) return null;
 
   try {
@@ -46,6 +51,28 @@ function resolveRtspPublishUrl() {
   }
 
   return null;
+}
+
+function detectLanIp() {
+  const nets = os.networkInterfaces();
+  for (const name of Object.keys(nets)) {
+    for (const net of nets[name] || []) {
+      if (net.family === "IPv4" && !net.internal) {
+        return net.address;
+      }
+    }
+  }
+  return "127.0.0.1";
+}
+
+function resolveLocalWebrtcUrl() {
+  const explicit = process.env.MEDIAMTX_LOCAL_WEBRTC_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+
+  const lanIp = process.env.MEDIAMTX_LOCAL_LAN_IP?.trim() || detectLanIp();
+  const port = Number(process.env.MEDIAMTX_LOCAL_WEBRTC_PORT) || 8889;
+  const protocol = process.env.MEDIAMTX_LOCAL_WEBRTC_PROTOCOL?.trim() || "http";
+  return `${protocol}://${lanIp}:${port}`;
 }
 
 export const config = {
@@ -61,33 +88,48 @@ export const config = {
         ? "webrtc"
         : "mpegts",
   homePresetToken: process.env.HOME_PRESET_TOKEN || "255",
-  /** Khi MediaMTX trung tâm sập, client local (LAN) relay MPEG-TS qua FFmpeg. */
-  mediamtxLocalFallback: process.env.MEDIAMTX_LOCAL_FALLBACK !== "false",
   mediamtxHealthCacheMs: Number(process.env.MEDIAMTX_HEALTH_CACHE_MS) || 10_000,
-  /** URL public MiniPC cho ws MPEG-TS fallback — override tĩnh (tùy chọn). */
-  publicWsBaseUrl:
-    process.env.PUBLIC_WS_BASE_URL?.trim() ||
-    process.env.MONITOR_ENV_PUBLIC_URL?.trim() ||
-    null,
-  /** origin=httpBase — ghi đè base ws fallback theo origin FE. */
-  publicWsOriginMap: parseOriginMap(process.env.PUBLIC_WS_ORIGIN_MAP),
   mediamtx: {
-    apiUrl: process.env.MEDIAMTX_API_URL?.trim() || "http://127.0.0.1:9997",
-    /** Port WHEP/WebRTC MediaMTX — hostname lấy động từ Origin/Host của client. */
-    webrtcPort: Number(process.env.MEDIAMTX_WEBRTC_PORT) || 8889,
-    webrtcProtocol: process.env.MEDIAMTX_WEBRTC_PROTOCOL?.trim() || "http",
-    /** URL WHEP/WebRTC MediaMTX trung tâm (MEDIAMTX_WEBRTC_URL). */
-    webrtcFallbackUrl:
-      process.env.MEDIAMTX_WEBRTC_URL?.trim() || "http://127.0.0.1:8889",
-    /** origin=webrtcUrl — ghi đè khi WHEP host khác hostname FE (CDN, tunnel…). */
-    webrtcOriginMap: parseOriginMap(process.env.MEDIAMTX_WEBRTC_ORIGIN_MAP),
-    /**
-     * Base RTSP publish tới MediaMTX trung tâm (vd. rtsp://45.76.152.73:8554).
-     * Mặc định suy ra từ hostname MEDIAMTX_API_URL + :8554.
-     */
-    rtspPublishUrl: resolveRtspPublishUrl(),
+    local: {
+      apiUrl:
+        process.env.MEDIAMTX_LOCAL_API_URL?.trim() || "http://127.0.0.1:9997",
+      webrtcUrl: resolveLocalWebrtcUrl(),
+      rtspInternalUrl:
+        process.env.MEDIAMTX_LOCAL_RTSP_URL?.trim() || "rtsp://127.0.0.1:8554",
+      webrtcOriginMap: parseOriginMap(
+        process.env.MEDIAMTX_LOCAL_WEBRTC_ORIGIN_MAP,
+      ),
+    },
+    central: {
+      apiUrl:
+        process.env.MEDIAMTX_CENTRAL_API_URL?.trim() ||
+        process.env.MEDIAMTX_API_URL?.trim() ||
+        null,
+      webrtcUrl:
+        process.env.MEDIAMTX_CENTRAL_WEBRTC_URL?.trim() ||
+        process.env.MEDIAMTX_WEBRTC_URL?.trim() ||
+        null,
+      rtspPublishUrl: resolveCentralRtspPublishUrl(),
+      webrtcOriginMap: parseOriginMap(
+        process.env.MEDIAMTX_CENTRAL_WEBRTC_ORIGIN_MAP ||
+          process.env.MEDIAMTX_WEBRTC_ORIGIN_MAP,
+      ),
+    },
   },
-  /** Dừng upstream quality path sau N ms không còn MediaMTX reader (0 = tắt). */
+  /** Dừng local ingest sau N ms không còn local MTX reader (0 = tắt). */
   streamIdleStopMs: Number(process.env.STREAM_IDLE_STOP_MS) || 300_000,
   streamIdlePollMs: Number(process.env.STREAM_IDLE_POLL_MS) || 60_000,
+  /** Safety: dừng central relay khi không còn reader và remoteViewerCount = 0. */
+  centralRelayIdleStopMs:
+    Number(process.env.CENTRAL_RELAY_IDLE_STOP_MS) || 120_000,
 };
+
+/** @typedef {'local' | 'central'} MtxTarget */
+/** @typedef {'local' | 'remote'} StreamScope */
+
+export function resolveStreamScope(raw) {
+  const scope = String(raw || "local")
+    .trim()
+    .toLowerCase();
+  return scope === "remote" ? "remote" : "local";
+}

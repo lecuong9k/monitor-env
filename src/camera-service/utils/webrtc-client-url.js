@@ -11,20 +11,21 @@ function normalizeOrigin(value) {
 }
 
 /**
- * URL WHEP/WebRTC base — mặc định MediaMTX trung tâm (MEDIAMTX_WEBRTC_URL).
- * Ghi đè theo origin qua MEDIAMTX_WEBRTC_ORIGIN_MAP khi cần (CDN, tunnel…).
- *
- * @param {{ origin?: string | null, host?: string | null }} clientContext
+ * URL WHEP/WebRTC base theo scope stream.
+ * @param {'local' | 'remote'} scope
+ * @param {{ origin?: string | null, host?: string | null }} [clientContext]
  */
-export function resolveWebrtcBaseUrl(clientContext = {}) {
+export function resolveWebrtcBaseUrl(scope = "local", clientContext = {}) {
   const origin = normalizeOrigin(clientContext.origin);
-  const originMap = config.mediamtx.webrtcOriginMap;
+  const mtxConfig =
+    scope === "remote" ? config.mediamtx.central : config.mediamtx.local;
+  const originMap = mtxConfig.webrtcOriginMap || {};
 
   if (origin && originMap[origin]) {
     return originMap[origin];
   }
 
-  return config.mediamtx.webrtcFallbackUrl;
+  return mtxConfig.webrtcUrl || "";
 }
 
 /** @param {import('fastify').FastifyRequest} request */
