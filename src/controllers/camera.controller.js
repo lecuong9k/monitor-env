@@ -93,7 +93,7 @@ export async function getCameraStreamOptionsController(request, reply) {
 
 export async function updateCameraStreamQualityController(request, reply) {
   try {
-    const { qualityId } = request.body ?? {};
+    const { qualityId, previousQualityId } = request.body ?? {};
     if (!qualityId) {
       return reply.code(400).send({ error: "Thiếu qualityId" });
     }
@@ -102,6 +102,7 @@ export async function updateCameraStreamQualityController(request, reply) {
       qualityId,
       request,
       parseScope(request),
+      previousQualityId,
     );
   } catch (err) {
     request.log.error(err);

@@ -185,12 +185,17 @@ export async function updateCameraStreamQuality(
   qualityId,
   request,
   scope = "local",
+  previousQualityId,
 ) {
+  const body = { qualityId, scope };
+  if (previousQualityId) {
+    body.previousQualityId = previousQualityId;
+  }
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/quality`,
     {
       method: "POST",
-      body: JSON.stringify({ qualityId, scope }),
+      body: JSON.stringify(body),
     },
     request,
   );
