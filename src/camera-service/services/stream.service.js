@@ -711,42 +711,11 @@ export async function restartCameraStream(
 }
 
 /**
- * Dừng mọi quality khác của camera (dùng khi chuyển độ phân giải).
  * @param {number} cameraId
- * @param {StreamQualityId} keepQualityId
+ * @param {StreamQualityId} qualityId
+ * @param {import('../utils/webrtc-client-url.js').ClientContext} clientContext
+ * @param {{ scope?: StreamScope, previousQualityId?: StreamQualityId }} [options]
  */
-async function forceStopOtherQualities(cameraId, keepQualityId) {
-  const camera = findCameraById(cameraId);
-  if (!camera) return;
-
-  const byQuality = streams.get(cameraId);
-  if (!byQuality || byQuality.size === 0) return;
-
-  const keepResolved = resolveStreamQualityId(keepQualityId);
-
-  for (const [qualityId, state] of [...byQuality.entries()]) {
-    if (qualityId === keepResolved) continue;
-
-    const mtxPath = state.mtxPathName || resolveMtxPathName(camera, qualityId);
-    state.idleSince = null;
-    state.centralIdleSince = null;
-    state.localViewerCount = 0;
-    state.remoteViewerCount = 0;
-
-    if (isStreaming(state)) {
-      await stopCentralRelay(state, mtxPath);
-      await stopLocalIngest(state, mtxPath);
-      await stopFfmpegField(state, "ffmpegProcess");
-    }
-
-    state.currentRtspUrl = null;
-    state.mtxPathName = null;
-    byQuality.delete(qualityId);
-  }
-
-  if (byQuality.size === 0) streams.delete(cameraId);
-}
-
 export async function setStreamQuality(
   cameraId,
   qualityId,
@@ -758,13 +727,21 @@ export async function setStreamQuality(
     throw new Error("Không tìm thấy camera");
   }
 
+  const scope = resolveStreamScope(options.scope);
   const resolvedQuality = resolveCameraQualityId(camera, qualityId);
-  await forceStopOtherQualities(cameraId, resolvedQuality);
+  const previousRaw = options.previousQualityId;
+  if (previousRaw) {
+    const resolvedPrevious = resolveCameraQualityId(camera, previousRaw);
+    if (resolvedPrevious !== resolvedQuality) {
+      await stopQualityStream(cameraId, resolvedPrevious, { scope });
+    }
+  }
+
   const streamResult = await startQualityStreamInternal(
     cameraId,
     resolvedQuality,
     clientContext,
-    options,
+    { scope },
   );
 
   return {
@@ -808,6 +785,44 @@ export function getLifecycleTargets() {
   }
 
   return targets;
+}
+
+/**
+ * Dọn ingest mồ côi: viewer count = 0 nhưng pipeline vẫn chạy.
+ * @param {number} cameraId
+ * @param {StreamQualityId} qualityId
+ */
+export async function cleanupOrphanQualityStream(cameraId, qualityId) {
+  const camera = findCameraById(cameraId);
+  if (!camera) return { ok: true, cleaned: false };
+
+  const byQuality = streams.get(cameraId);
+  const resolvedQuality = resolveStreamQualityId(qualityId);
+  const state = byQuality?.get(resolvedQuality);
+  if (!state) return { ok: true, cleaned: false };
+  if (state.localViewerCount > 0 || state.remoteViewerCount > 0) {
+    return { ok: true, cleaned: false };
+  }
+  if (!isStreaming(state)) return { ok: true, cleaned: false };
+
+  const mtxPath =
+    state.mtxPathName || resolveMtxPathName(camera, resolvedQuality);
+  state.idleSince = null;
+  state.centralIdleSince = null;
+
+  await stopCentralRelay(state, mtxPath);
+  await stopLocalIngest(state, mtxPath);
+  await stopFfmpegField(state, "ffmpegProcess");
+
+  state.currentRtspUrl = null;
+  state.mtxPathName = null;
+  byQuality.delete(resolvedQuality);
+  if (byQuality.size === 0) streams.delete(cameraId);
+
+  console.log(
+    `[stream] Orphan cleanup camera ${cameraId} quality ${resolvedQuality}`,
+  );
+  return { ok: true, cleaned: true, quality: resolvedQuality };
 }
 
 export function stopAllStreams() {

@@ -19,7 +19,12 @@ import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 import { parseQualityForCamera } from "../utils/stream-quality-params.js";
 
 function streamOptionsFromBody(body = {}) {
-  return { scope: resolveStreamScope(body.scope) };
+  const options = { scope: resolveStreamScope(body.scope) };
+  const previousQualityId = String(body.previousQualityId || "").trim();
+  if (previousQualityId) {
+    options.previousQualityId = previousQualityId;
+  }
+  return options;
 }
 
 export async function listCamerasController(request) {

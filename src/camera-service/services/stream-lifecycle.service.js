@@ -1,6 +1,10 @@
 import { config } from "../config.js";
 import { countPathReaders, getPathStats } from "./mediamtx.service.js";
-import { getLifecycleTargets, stopQualityStream } from "./stream.service.js";
+import {
+  getLifecycleTargets,
+  stopQualityStream,
+  cleanupOrphanQualityStream,
+} from "./stream.service.js";
 
 /** @type {ReturnType<typeof setInterval> | null} */
 let poller = null;
@@ -16,6 +20,9 @@ async function evaluateTarget(target) {
     state.centralIdleSince = null;
     return;
   }
+
+  const orphanResult = await cleanupOrphanQualityStream(cameraId, qualityId);
+  if (orphanResult.cleaned) return;
 
   // Local ingest idle backup
   if (state.localMtxActive && mtxPathName) {
