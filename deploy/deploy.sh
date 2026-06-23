@@ -198,8 +198,10 @@ cleanup_legacy_mediamtx() {
     sh "${APP_DIR}/scripts/mediamtx-stop.sh" || true
   fi
 
-  if [ ! -x "${APP_DIR}/mediamtx" ]; then
-    warn "Thiếu binary ./mediamtx — tải từ https://github.com/bluenviron/mediamtx/releases và đặt tại ${APP_DIR}/mediamtx"
+  if [ -f "${APP_DIR}/scripts/install-mediamtx.sh" ]; then
+    sh "${APP_DIR}/scripts/install-mediamtx.sh" || die "Không cài được ./mediamtx — chạy thủ công: sh scripts/install-mediamtx.sh"
+  elif [ ! -x "${APP_DIR}/mediamtx" ]; then
+    die "Thiếu binary ./mediamtx — chạy: sh scripts/install-mediamtx.sh"
   fi
 }
 

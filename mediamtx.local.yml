@@ -9,6 +9,7 @@ apiAddress: :9997
 apiAllowOrigins:
   - "http://127.0.0.1:3000"
   - "http://localhost:3000"
+  - "http://192.168.5.97:3000"
 
 metrics: yes
 metricsAddress: 127.0.0.1:9998
@@ -18,10 +19,12 @@ webrtcAddress: :8889
 webrtcAllowOrigins:
   - "http://127.0.0.1:3000"
   - "http://localhost:3000"
+  - "http://192.168.5.97:3000"
 # Thêm IP LAN MiniPC khi deploy production (vd. 192.168.x.x)
 webrtcAdditionalHosts:
   - "127.0.0.1"
   - "localhost"
+  - "192.168.5.97"
 webrtcLocalUDPAddress: :8189
 webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
