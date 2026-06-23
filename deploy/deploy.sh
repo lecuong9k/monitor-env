@@ -65,7 +65,8 @@ mbox_http_base_from_ws_url() {
 }
 
 mediamtx_api_base() {
-  printf '%s' "${MEDIAMTX_CENTRAL_API_URL:-${MEDIAMTX_API_URL%/}}"
+  local url="${MEDIAMTX_CENTRAL_API_URL:-${MEDIAMTX_API_URL:-}}"
+  printf '%s' "${url%/}"
 }
 
 mediamtx_rtsp_publish_endpoint() {
@@ -151,17 +152,18 @@ wait_http() {
 }
 
 preflight_remote_services() {
-  local mtx_url mbox_http
+  local mtx_url mtx_api mbox_http
 
-  mtx_url="$(mediamtx_api_base)/v3/config/global/get"
+  mtx_api="$(mediamtx_api_base)"
+  mtx_url="${mtx_api}/v3/config/global/get"
   mbox_http="$(mbox_http_base_from_ws_url "$MBOX_EDGE_WS_URL")"
 
   log "Preflight — kiểm tra dịch vụ trên server Mbox"
 
-  if wait_http "$mtx_url" "MediaMTX API ($MEDIAMTX_API_URL)" 5; then
+  if wait_http "$mtx_url" "MediaMTX API ($mtx_api)" 5; then
     :
   else
-    warn "MiniPC không reach được MediaMTX API — kiểm tra firewall Mbox (:9997) và MEDIAMTX_API_URL"
+    warn "MiniPC không reach được MediaMTX API — kiểm tra firewall Mbox (:9997) và MEDIAMTX_CENTRAL_API_URL"
   fi
 
   if wait_http "${mbox_http}/api/edge/status" "Mbox edge gateway" 5; then
