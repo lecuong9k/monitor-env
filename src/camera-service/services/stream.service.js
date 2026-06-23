@@ -710,6 +710,43 @@ export async function restartCameraStream(
   });
 }
 
+/**
+ * Dừng mọi quality khác của camera (dùng khi chuyển độ phân giải).
+ * @param {number} cameraId
+ * @param {StreamQualityId} keepQualityId
+ */
+async function forceStopOtherQualities(cameraId, keepQualityId) {
+  const camera = findCameraById(cameraId);
+  if (!camera) return;
+
+  const byQuality = streams.get(cameraId);
+  if (!byQuality || byQuality.size === 0) return;
+
+  const keepResolved = resolveStreamQualityId(keepQualityId);
+
+  for (const [qualityId, state] of [...byQuality.entries()]) {
+    if (qualityId === keepResolved) continue;
+
+    const mtxPath = state.mtxPathName || resolveMtxPathName(camera, qualityId);
+    state.idleSince = null;
+    state.centralIdleSince = null;
+    state.localViewerCount = 0;
+    state.remoteViewerCount = 0;
+
+    if (isStreaming(state)) {
+      await stopCentralRelay(state, mtxPath);
+      await stopLocalIngest(state, mtxPath);
+      await stopFfmpegField(state, "ffmpegProcess");
+    }
+
+    state.currentRtspUrl = null;
+    state.mtxPathName = null;
+    byQuality.delete(qualityId);
+  }
+
+  if (byQuality.size === 0) streams.delete(cameraId);
+}
+
 export async function setStreamQuality(
   cameraId,
   qualityId,
@@ -722,6 +759,7 @@ export async function setStreamQuality(
   }
 
   const resolvedQuality = resolveCameraQualityId(camera, qualityId);
+  await forceStopOtherQualities(cameraId, resolvedQuality);
   const streamResult = await startQualityStreamInternal(
     cameraId,
     resolvedQuality,
