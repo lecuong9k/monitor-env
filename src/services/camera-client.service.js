@@ -1,7 +1,3 @@
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import WebSocket from "ws";
-
 const BASE_URL =
   process.env.CAMERA_SERVICE_URL?.trim() || "http://127.0.0.1:4001";
 const API_KEY = process.env.CAMERA_SERVICE_API_KEY?.trim() || "";
@@ -14,7 +10,7 @@ function serviceHeaders(extra = {}) {
   };
 }
 
-/** Chuyển Origin/Host từ request FE sang camera-service (origin map WHEP nếu có). */
+/** Chuyển Origin/Host từ request FE sang camera-service. */
 function clientProxyHeaders(request) {
   if (!request?.headers) return {};
 
@@ -29,6 +25,20 @@ function clientProxyHeaders(request) {
   if (host) headers["X-Forwarded-Host"] = host;
 
   return headers;
+}
+
+function qualityQuery(qualityId, scope) {
+  const params = new URLSearchParams();
+  if (qualityId) params.set("quality", String(qualityId));
+  if (scope) params.set("scope", String(scope));
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+function bodyWithStreamOptions(qualityId, extra = {}) {
+  const body = { ...extra };
+  if (qualityId) body.qualityId = qualityId;
+  return JSON.stringify(body);
 }
 
 async function parseResponse(res) {
@@ -98,173 +108,98 @@ export async function deleteCamera(cameraId) {
   });
 }
 
-export async function getCameraStreamUrl(cameraId, request) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream-url`, {}, request);
+export async function getCameraStreamUrl(
+  cameraId,
+  request,
+  qualityId,
+  scope = "local",
+) {
+  const qs = qualityQuery(qualityId, scope);
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream-url${qs}`,
+    {},
+    request,
+  );
 }
 
-export async function getCameraStreamOptions(cameraId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/options`);
+export async function getCameraStreamOptions(cameraId, qualityId) {
+  const qs = qualityQuery(qualityId);
+  return cameraServiceFetch(`/cameras/${cameraId}/stream/options${qs}`);
 }
 
-export async function getStreamStatus(cameraId, request) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/status`, {}, request);
+export async function getStreamStatus(
+  cameraId,
+  request,
+  qualityId,
+  scope = "local",
+) {
+  const qs = qualityQuery(qualityId, scope);
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/stream/status${qs}`,
+    {},
+    request,
+  );
 }
 
-export async function startCameraStream(cameraId, request) {
-  const relay = request?.headers?.["x-edge-relay"] === "mbox";
+export async function startCameraStream(
+  cameraId,
+  request,
+  qualityId,
+  scope = "local",
+) {
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/start`,
     {
       method: "POST",
-      body: "{}",
-      headers: relay ? { "X-Edge-Relay": "mbox" } : {},
+      body: bodyWithStreamOptions(qualityId, { scope }),
     },
     request,
   );
 }
 
-export async function stopCameraStream(cameraId) {
+export async function stopCameraStream(cameraId, qualityId, scope = "local") {
   return cameraServiceFetch(`/cameras/${cameraId}/stream/stop`, {
     method: "POST",
-    body: "{}",
+    body: bodyWithStreamOptions(qualityId, { scope }),
   });
 }
 
-export async function restartCameraStream(cameraId, request) {
+export async function restartCameraStream(
+  cameraId,
+  request,
+  qualityId,
+  scope = "local",
+) {
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/restart`,
     {
       method: "POST",
-      body: "{}",
+      body: bodyWithStreamOptions(qualityId, { scope }),
     },
     request,
   );
 }
 
-export async function forceCameraStreamFallback(cameraId, request) {
+export async function updateCameraStreamQuality(
+  cameraId,
+  qualityId,
+  request,
+  scope = "local",
+) {
   return cameraServiceFetch(
-    `/cameras/${cameraId}/stream/fallback`,
+    `/cameras/${cameraId}/stream/quality`,
     {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify({ qualityId, scope }),
     },
     request,
   );
-}
-
-export async function updateCameraStreamQuality(cameraId, qualityId) {
-  return cameraServiceFetch(`/cameras/${cameraId}/stream/quality`, {
-    method: "POST",
-    body: JSON.stringify({ qualityId }),
-  });
 }
 
 export async function executePtz(cameraId, body) {
   return cameraServiceFetch(`/cameras/${cameraId}/ptz`, {
     method: "POST",
     body: JSON.stringify(body ?? {}),
-  });
-}
-
-export async function proxyMpegTsStream(cameraId, reply, request) {
-  const res = await fetch(
-    `${BASE_URL.replace(/\/$/, "")}/cameras/${cameraId}/stream/live.ts`,
-    {
-      headers: serviceHeaders(),
-    },
-  );
-
-  reply.hijack();
-
-  if (!res.ok) {
-    const text = await res.text();
-    reply.raw.writeHead(res.status, { "Content-Type": "application/json" });
-    reply.raw.end(text);
-    return;
-  }
-
-  const headers = {
-    "Content-Type": res.headers.get("content-type") || "video/mp2t",
-    "Cache-Control": "no-cache, no-store, must-revalidate",
-    Connection: "keep-alive",
-  };
-
-  const origin = request.headers.origin;
-  if (origin) {
-    headers["Access-Control-Allow-Origin"] = origin;
-    headers["Access-Control-Allow-Credentials"] = "true";
-    headers.Vary = "Origin";
-  }
-
-  reply.raw.writeHead(res.status, headers);
-
-  if (res.body) {
-    await pipeline(Readable.fromWeb(res.body), reply.raw);
-  } else {
-    reply.raw.end();
-  }
-}
-
-function wsBaseUrl() {
-  const url = new URL(BASE_URL);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  return url.origin;
-}
-
-export function proxyCameraWebSocket(clientSocket, cameraId) {
-  const upstream = new WebSocket(
-    `${wsBaseUrl()}/cameras/${cameraId}/stream/ws`,
-    {
-      headers: {
-        "X-Camera-Service-Key": API_KEY,
-      },
-    },
-  );
-
-  upstream.on("open", () => {
-    clientSocket.on("message", (data, isBinary) => {
-      if (upstream.readyState === WebSocket.OPEN) {
-        upstream.send(data, { binary: isBinary });
-      }
-    });
-
-    upstream.on("message", (data, isBinary) => {
-      if (clientSocket.readyState === 1) {
-        clientSocket.send(data, { binary: isBinary });
-      }
-    });
-  });
-
-  const isValidCloseCode = (code) =>
-    typeof code === "number" &&
-    ((code >= 1000 &&
-      code <= 1014 &&
-      code !== 1004 &&
-      code !== 1005 &&
-      code !== 1006) ||
-      (code >= 3000 && code <= 4999));
-
-  const closeBoth = (code, reason) => {
-    const safeCode = isValidCloseCode(code) ? code : undefined;
-    if (clientSocket.readyState === 1) clientSocket.close(safeCode, reason);
-    if (upstream.readyState === WebSocket.OPEN)
-      upstream.close(safeCode, reason);
-  };
-
-  upstream.on("close", (code, reason) => {
-    const reasonStr = reason
-      ? Buffer.isBuffer(reason)
-        ? reason.toString()
-        : String(reason)
-      : undefined;
-    closeBoth(code, reasonStr);
-  });
-  upstream.on("error", () => closeBoth(1011, "Upstream error"));
-  clientSocket.on("close", () => {
-    if (upstream.readyState === WebSocket.OPEN) upstream.close();
-  });
-  clientSocket.on("error", () => {
-    if (upstream.readyState === WebSocket.OPEN) upstream.close();
   });
 }
 

@@ -12,15 +12,15 @@ import {
   stopCameraStream,
   updateCameraRecord,
   updateCameraStreamQuality,
-  ensureMpegtsRelayStream,
-  forceCameraStreamFallback,
 } from "../services/camera.service.js";
-import {
-  addWsClient,
-  attachMpegTsClient,
-  getStreamStatus,
-} from "../services/stream.service.js";
+import { getStreamStatus } from "../services/stream.service.js";
+import { resolveStreamScope } from "../config.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
+import { parseQualityForCamera } from "../utils/stream-quality-params.js";
+
+function streamOptionsFromBody(body = {}) {
+  return { scope: resolveStreamScope(body.scope) };
+}
 
 export async function listCamerasController(request) {
   return listCameras(clientContextFromRequest(request));
@@ -65,35 +65,29 @@ export async function deleteCameraController(request, reply) {
 
 export async function getCameraStreamUrlController(request, reply) {
   try {
+    const cameraId = Number(request.params.id);
+    const qualityId = parseQualityForCamera(request, cameraId);
+    const scope = resolveStreamScope(
+      request.query?.scope || request.body?.scope,
+    );
     return getCameraStreamUrl(
-      Number(request.params.id),
+      cameraId,
       clientContextFromRequest(request),
+      qualityId,
+      scope,
     );
   } catch (err) {
     return reply.code(404).send({ error: err.message });
   }
 }
 
-export async function liveMpegTsController(request, reply) {
-  reply.hijack();
-  try {
-    await attachMpegTsClient(Number(request.params.id), reply, request);
-  } catch (err) {
-    request.log.error(err);
-    if (!reply.raw.writableEnded) {
-      reply.raw.writeHead(500, { "Content-Type": "application/json" });
-      reply.raw.end(JSON.stringify({ error: err.message }));
-    }
-  }
-}
-
 export async function startCameraStreamController(request, reply) {
   try {
+    const cameraId = Number(request.params.id);
     const clientContext = clientContextFromRequest(request);
-    if (request.headers["x-edge-relay"] === "mbox") {
-      return await ensureMpegtsRelayStream(Number(request.params.id));
-    }
-    return await startCameraStream(Number(request.params.id), clientContext);
+    const qualityId = parseQualityForCamera(request, cameraId);
+    const options = streamOptionsFromBody(request.body);
+    return await startCameraStream(cameraId, clientContext, qualityId, options);
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -102,7 +96,10 @@ export async function startCameraStreamController(request, reply) {
 
 export async function stopCameraStreamController(request, reply) {
   try {
-    return await stopCameraStream(Number(request.params.id));
+    const cameraId = Number(request.params.id);
+    const qualityRaw = request.body?.qualityId ?? request.query?.quality;
+    const options = streamOptionsFromBody(request.body);
+    return await stopCameraStream(cameraId, qualityRaw || undefined, options);
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -111,20 +108,15 @@ export async function stopCameraStreamController(request, reply) {
 
 export async function restartCameraStreamController(request, reply) {
   try {
+    const cameraId = Number(request.params.id);
     const clientContext = clientContextFromRequest(request);
-    return await restartCameraStream(Number(request.params.id), clientContext);
-  } catch (err) {
-    request.log.error(err);
-    return reply.code(500).send({ error: err.message });
-  }
-}
-
-export async function forceCameraStreamFallbackController(request, reply) {
-  try {
-    const clientContext = clientContextFromRequest(request);
-    return await forceCameraStreamFallback(
-      Number(request.params.id),
+    const qualityId = parseQualityForCamera(request, cameraId);
+    const options = streamOptionsFromBody(request.body);
+    return await restartCameraStream(
+      cameraId,
       clientContext,
+      qualityId,
+      options,
     );
   } catch (err) {
     request.log.error(err);
@@ -132,20 +124,11 @@ export async function forceCameraStreamFallbackController(request, reply) {
   }
 }
 
-export async function cameraStreamWsController(socket, request) {
-  const cameraId = Number(request.params.id);
-  try {
-    getCameraById(cameraId);
-  } catch {
-    socket.close(1008, "Không tìm thấy camera");
-    return;
-  }
-  addWsClient(cameraId, socket);
-}
-
 export async function getCameraStreamOptionsController(request, reply) {
   try {
-    return getCameraStreamOptions(Number(request.params.id));
+    const cameraId = Number(request.params.id);
+    const qualityId = parseQualityForCamera(request, cameraId);
+    return getCameraStreamOptions(cameraId, qualityId);
   } catch (err) {
     return reply.code(404).send({ error: err.message });
   }
@@ -157,10 +140,12 @@ export async function updateCameraStreamQualityController(request, reply) {
     if (!qualityId) {
       return reply.code(400).send({ error: "Thiếu qualityId" });
     }
+    const options = streamOptionsFromBody(request.body);
     return await updateCameraStreamQuality(
       Number(request.params.id),
       qualityId,
       clientContextFromRequest(request),
+      options,
     );
   } catch (err) {
     request.log.error(err);
@@ -179,8 +164,13 @@ export async function ptzController(request, reply) {
 }
 
 export async function streamStatusController(request) {
+  const cameraId = Number(request.params.id);
+  const qualityId = parseQualityForCamera(request, cameraId);
+  const scope = resolveStreamScope(request.query?.scope || request.body?.scope);
   return getStreamStatus(
-    Number(request.params.id),
+    cameraId,
     clientContextFromRequest(request),
+    qualityId,
+    scope,
   );
 }

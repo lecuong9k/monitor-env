@@ -1,12 +1,27 @@
 import { config } from "../config.js";
-import { resolveWebrtcBaseUrl } from "../utils/webrtc-client-url.js";
 
-function apiBase() {
-  return config.mediamtx.apiUrl.replace(/\/$/, "");
+/** @typedef {'local' | 'central'} MtxTarget */
+
+/** @param {MtxTarget} target */
+function getMtxConfig(target) {
+  if (target === "central") {
+    const central = config.mediamtx.central;
+    if (!central.apiUrl) {
+      throw new Error("MEDIAMTX_CENTRAL_API_URL chưa cấu hình");
+    }
+    return central;
+  }
+  return config.mediamtx.local;
 }
 
-async function mtxFetch(path, options = {}) {
-  const res = await fetch(`${apiBase()}${path}`, {
+/** @param {MtxTarget} target */
+function apiBase(target) {
+  return getMtxConfig(target).apiUrl.replace(/\/$/, "");
+}
+
+/** @param {MtxTarget} target */
+async function mtxFetch(target, path, options = {}) {
+  const res = await fetch(`${apiBase(target)}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -17,7 +32,7 @@ async function mtxFetch(path, options = {}) {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     const err = new Error(
-      `MediaMTX API ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
+      `MediaMTX ${target} API ${res.status}${body ? `: ${body.slice(0, 200)}` : ""}`,
     );
     err.status = res.status;
     throw err;
@@ -27,56 +42,123 @@ async function mtxFetch(path, options = {}) {
   return text ? JSON.parse(text) : null;
 }
 
-/** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
-export function getWhepUrl(pathName, clientContext) {
-  const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");
+const QUALITY_SUFFIX_RE = /-(main|sub|mobile)$/;
+
+/** @param {string} basePath @param {string} qualityId */
+export function resolveQualityPath(basePath, qualityId) {
+  const base = String(basePath || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .replace(QUALITY_SUFFIX_RE, "");
+  const q = String(qualityId || "main")
+    .trim()
+    .toLowerCase();
+  if (!base) {
+    throw new Error("mediamtx_path không hợp lệ");
+  }
+  return `${base}-${q}`;
+}
+
+/** @param {MtxTarget} target @param {string} pathName */
+export async function getPathStats(target, pathName) {
+  try {
+    return await mtxFetch(
+      target,
+      `/v3/paths/get/${encodeURIComponent(pathName)}`,
+    );
+  } catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
+}
+
+/** @param {Record<string, unknown> | null | undefined} pathStats */
+export function countPathReaders(pathStats) {
+  if (!pathStats) return 0;
+  if (Array.isArray(pathStats.readers)) return pathStats.readers.length;
+  if (typeof pathStats.readerCount === "number") return pathStats.readerCount;
+  return 0;
+}
+
+/**
+ * @param {string} pathName
+ * @param {MtxTarget} target
+ * @param {{ origin?: string | null, host?: string | null }} [clientContext]
+ */
+export function getWhepUrl(pathName, target, clientContext = {}) {
+  const mtxConfig = getMtxConfig(target);
+  const origin = normalizeOrigin(clientContext.origin);
+  const originMap = mtxConfig.webrtcOriginMap || {};
+
+  let base = mtxConfig.webrtcUrl?.replace(/\/$/, "") || "";
+  if (origin && originMap[origin]) {
+    base = originMap[origin].replace(/\/$/, "");
+  }
+
   return `${base}/${pathName}/whep`;
 }
 
-/** @param {string} pathName @param {{ origin?: string | null, host?: string | null }} [clientContext] */
-export function getWebRtcPageUrl(pathName, clientContext) {
-  const base = resolveWebrtcBaseUrl(clientContext).replace(/\/$/, "");
-  return `${base}/${pathName}`;
+/**
+ * @param {string} pathName
+ * @param {MtxTarget} target
+ * @param {{ origin?: string | null, host?: string | null }} [clientContext]
+ */
+export function getWebRtcPageUrl(pathName, target, clientContext = {}) {
+  const whep = getWhepUrl(pathName, target, clientContext);
+  return whep.replace(/\/whep$/, "");
 }
 
-export async function checkMediamtxAvailable() {
-  await mtxFetch("/v3/config/global/get");
+function normalizeOrigin(value) {
+  if (!value) return "";
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return String(value).trim().replace(/\/$/, "");
+  }
 }
 
-let healthCache = { available: null, checkedAt: 0 };
+/** @param {MtxTarget} [target] */
+export async function checkMediamtxAvailable(target = "local") {
+  await mtxFetch(target, "/v3/config/global/get");
+}
 
-/** @param {{ force?: boolean }} [options] */
-export async function isMediamtxAvailable(options = {}) {
+/** @type {Record<string, { available: boolean | null, checkedAt: number }>} */
+const healthCache = {};
+
+/** @param {MtxTarget} target @param {{ force?: boolean }} [options] */
+export async function isMediamtxAvailable(target = "local", options = {}) {
   const ttl = config.mediamtxHealthCacheMs;
   const now = Date.now();
+  const cache = healthCache[target] || { available: null, checkedAt: 0 };
 
   if (
     !options.force &&
-    healthCache.available !== null &&
-    now - healthCache.checkedAt < ttl
+    cache.available !== null &&
+    now - cache.checkedAt < ttl
   ) {
-    return healthCache.available;
+    return cache.available;
   }
 
   try {
-    await checkMediamtxAvailable();
-    healthCache = { available: true, checkedAt: now };
+    await checkMediamtxAvailable(target);
+    healthCache[target] = { available: true, checkedAt: now };
     return true;
   } catch {
-    healthCache = { available: false, checkedAt: now };
+    healthCache[target] = { available: false, checkedAt: now };
     return false;
   }
 }
 
-export function isRtspPushEnabled() {
-  return Boolean(config.mediamtx.rtspPublishUrl);
+export function isCentralRelayEnabled() {
+  return Boolean(config.mediamtx.central.rtspPublishUrl);
 }
 
 /** @param {string} pathName */
-export function getRtspPublishUrl(pathName) {
-  const base = config.mediamtx.rtspPublishUrl?.replace(/\/$/, "");
+export function getCentralRtspPublishUrl(pathName) {
+  const base = config.mediamtx.central.rtspPublishUrl?.replace(/\/$/, "");
   if (!base) {
-    throw new Error("MEDIAMTX_RTSP_PUBLISH_URL chưa cấu hình");
+    throw new Error("MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL chưa cấu hình");
   }
   const normalized = String(pathName || "")
     .trim()
@@ -87,22 +169,35 @@ export function getRtspPublishUrl(pathName) {
   return `${base}/${normalized}`;
 }
 
-/** Đăng ký path chờ MiniPC RTSP publish (thay vì VPS pull camera LAN). */
-export async function ensurePathPublisher(pathName) {
+/** @param {string} pathName */
+export function getLocalRtspReadUrl(pathName) {
+  const base = config.mediamtx.local.rtspInternalUrl.replace(/\/$/, "");
+  const normalized = String(pathName || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+  return `${base}/${normalized}`;
+}
+
+/** Đăng ký path chờ RTSP publish (central relay). */
+export async function ensurePathPublisher(target, pathName) {
   const body = {
     source: "publisher",
     sourceOnDemand: false,
     rtspTransport: "tcp",
   };
 
-  await mtxFetch(`/v3/config/paths/replace/${encodeURIComponent(pathName)}`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  await mtxFetch(
+    target,
+    `/v3/config/paths/replace/${encodeURIComponent(pathName)}`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
-/** @deprecated Chỉ dùng khi VPS reach được camera (dev/LAN). Production dùng ensurePathPublisher. */
-export async function ensurePathSource(pathName, rtspUrl) {
+/** MediaMTX pull camera RTSP on-demand. */
+export async function ensurePathSource(target, pathName, rtspUrl) {
   const body = {
     source: rtspUrl,
     sourceOnDemand: true,
@@ -111,89 +206,24 @@ export async function ensurePathSource(pathName, rtspUrl) {
     rtspTransport: "tcp",
   };
 
-  await mtxFetch(`/v3/config/paths/replace/${encodeURIComponent(pathName)}`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
-}
-
-/** SDP tối thiểu để kích hoạt WHEP reader (probe nguồn on-demand). */
-const WHEP_PROBE_SDP = [
-  "v=0",
-  "o=- 0 0 IN IP4 127.0.0.1",
-  "s=-",
-  "t=0 0",
-  "a=group:BUNDLE 0 1",
-  "a=msid-semantic: WMS",
-  "m=video 9 UDP/TLS/RTP/SAVPF 96",
-  "c=IN IP4 0.0.0.0",
-  "a=rtcp-mux",
-  "a=recvonly",
-  "a=mid:0",
-  "m=audio 9 UDP/TLS/RTP/SAVPF 111",
-  "c=IN IP4 0.0.0.0",
-  "a=rtcp-mux",
-  "a=recvonly",
-  "a=mid:1",
-].join("\r\n");
-
-/**
- * Thử POST WHEP lên MediaMTX trung tâm — xác nhận nguồn RTSP thực sự online.
- * @param {string} pathName
- * @param {{ origin?: string | null, host?: string | null }} [clientContext]
- * @param {number} [timeoutMs]
- */
-export async function probeCentralWhep(
-  pathName,
-  clientContext,
-  timeoutMs = 12_000,
-) {
-  const whepUrl = getWhepUrl(pathName, clientContext);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(whepUrl, {
+  await mtxFetch(
+    target,
+    `/v3/config/paths/replace/${encodeURIComponent(pathName)}`,
+    {
       method: "POST",
-      headers: {
-        "Content-Type": "application/sdp",
-        Accept: "application/sdp",
-      },
-      body: WHEP_PROBE_SDP,
-      signal: controller.signal,
-    });
-
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(
-        `MediaMTX WHEP probe failed${body ? `: ${body.slice(0, 200)}` : ""}`,
-      );
-    }
-
-    const sessionUrl = res.headers.get("location");
-    if (sessionUrl) {
-      void fetch(sessionUrl, { method: "DELETE" }).catch(() => {});
-    }
-
-    return true;
-  } catch (err) {
-    if (err.name === "AbortError") {
-      throw new Error(
-        "MediaMTX WHEP probe timeout — nguồn RTSP không phản hồi kịp",
-      );
-    }
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
+      body: JSON.stringify(body),
+    },
+  );
 }
 
-export async function waitPathOnline(pathName, timeoutMs = 20_000) {
+/** @param {MtxTarget} target @param {string} pathName @param {number} [timeoutMs] */
+export async function waitPathOnline(target, pathName, timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
     try {
       const path = await mtxFetch(
+        target,
         `/v3/paths/get/${encodeURIComponent(pathName)}`,
       );
       if (path?.online === true) return path;
@@ -204,15 +234,20 @@ export async function waitPathOnline(pathName, timeoutMs = 20_000) {
   }
 
   throw new Error(
-    "Timeout chờ MediaMTX path online — kiểm tra RTSP URL và MediaMTX",
+    `Timeout chờ MediaMTX ${target} path online — kiểm tra RTSP URL và MediaMTX`,
   );
 }
 
-export async function clearPathSource(pathName) {
+/** @param {MtxTarget} target @param {string} pathName */
+export async function clearPathSource(target, pathName) {
   try {
-    await mtxFetch(`/v3/config/paths/delete/${encodeURIComponent(pathName)}`, {
-      method: "DELETE",
-    });
+    await mtxFetch(
+      target,
+      `/v3/config/paths/delete/${encodeURIComponent(pathName)}`,
+      {
+        method: "DELETE",
+      },
+    );
   } catch (err) {
     if (err.status === 404) return;
     throw err;

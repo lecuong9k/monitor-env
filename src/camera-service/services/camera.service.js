@@ -13,7 +13,7 @@ import {
   sendPtz,
   stopMove,
 } from "./onvif.service.js";
-import { config } from "../config.js";
+import { config, resolveStreamScope } from "../config.js";
 import {
   getStreamInfo,
   getStreamQualityForCamera,
@@ -21,8 +21,6 @@ import {
   setStreamQuality,
   startCameraStream,
   stopCameraStream,
-  ensureMpegtsRelayStream,
-  forceCameraStreamFallback,
 } from "./stream.service.js";
 
 export async function listCameras(clientContext) {
@@ -30,7 +28,12 @@ export async function listCameras(clientContext) {
   return cameras.map((camera) => {
     let stream;
     try {
-      stream = getStreamInfo(camera.id, clientContext);
+      stream = getStreamInfo(
+        camera.id,
+        clientContext,
+        camera.stream_quality,
+        "local",
+      );
     } catch {
       stream = { stream_type: config.streamMode };
     }
@@ -54,28 +57,28 @@ export function listCamerasRegistry() {
   return findAllCameras().map((row) => toAdminCamera(row));
 }
 
-export function getCameraStreamUrl(cameraId, clientContext) {
-  return getStreamInfo(cameraId, clientContext);
+export function getCameraStreamUrl(cameraId, clientContext, qualityId, scope) {
+  return getStreamInfo(
+    cameraId,
+    clientContext,
+    qualityId,
+    resolveStreamScope(scope),
+  );
 }
 
-export function getCameraStreamOptions(cameraId) {
-  return getStreamQualityForCamera(cameraId);
+export function getCameraStreamOptions(cameraId, qualityId) {
+  return getStreamQualityForCamera(cameraId, qualityId);
 }
 
-export {
-  startCameraStream,
-  stopCameraStream,
-  restartCameraStream,
-  ensureMpegtsRelayStream,
-  forceCameraStreamFallback,
-};
+export { startCameraStream, stopCameraStream, restartCameraStream };
 
 export async function updateCameraStreamQuality(
   cameraId,
   qualityId,
   clientContext,
+  options = {},
 ) {
-  return setStreamQuality(cameraId, qualityId, clientContext);
+  return setStreamQuality(cameraId, qualityId, clientContext, options);
 }
 
 export async function executePtz(cameraId, body) {
@@ -160,7 +163,8 @@ export function deleteCameraRecord(cameraId) {
     throw new Error("Không tìm thấy camera");
   }
 
-  void stopCameraStream(cameraId);
+  void stopCameraStream(cameraId, undefined, { scope: "local" });
+  void stopCameraStream(cameraId, undefined, { scope: "remote" });
   invalidateSession(cameraId);
   softDeleteCamera(cameraId);
   return { ok: true };

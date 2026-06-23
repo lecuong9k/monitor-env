@@ -65,14 +65,14 @@ mbox_http_base_from_ws_url() {
 }
 
 mediamtx_api_base() {
-  printf '%s' "${MEDIAMTX_API_URL%/}"
+  printf '%s' "${MEDIAMTX_CENTRAL_API_URL:-${MEDIAMTX_API_URL%/}}"
 }
 
 mediamtx_rtsp_publish_endpoint() {
-  local url=${MEDIAMTX_RTSP_PUBLISH_URL:-}
+  local url=${MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL:-${MEDIAMTX_RTSP_PUBLISH_URL:-}}
   if [ -z "$url" ]; then
     local api_host
-    api_host="$(printf '%s' "${MEDIAMTX_API_URL}" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
+    api_host="$(printf '%s' "${MEDIAMTX_CENTRAL_API_URL:-${MEDIAMTX_API_URL:-}}" | sed -E 's#^[a-zA-Z]+://([^/:]+).*#\1#')"
     if [ -n "$api_host" ]; then
       printf 'rtsp://%s:8554' "$api_host"
       return 0
@@ -105,8 +105,9 @@ check_required_env() {
     EDGE_ID \
     MBOX_EDGE_WS_URL \
     EDGE_AGENT_TOKEN \
-    MEDIAMTX_API_URL \
-    MEDIAMTX_WEBRTC_URL; do
+    MEDIAMTX_LOCAL_API_URL \
+    MEDIAMTX_CENTRAL_API_URL \
+    MEDIAMTX_CENTRAL_WEBRTC_URL; do
     if [ -z "${!var:-}" ]; then
       echo "  - $var"
       missing=1
@@ -126,7 +127,7 @@ check_required_env() {
   fi
 
   if [ "${STREAM_MODE:-webrtc}" = "webrtc" ] && ! mediamtx_rtsp_publish_endpoint >/dev/null 2>&1; then
-    warn "Chưa cấu hình MEDIAMTX_RTSP_PUBLISH_URL — sẽ dùng chế độ pull (VPS phải reach camera LAN)"
+    warn "Chưa cấu hình MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL — remote viewer sẽ không relay được"
   fi
 }
 
@@ -189,23 +190,14 @@ preflight_remote_services() {
 }
 
 cleanup_legacy_mediamtx() {
-  log "Dọn MediaMTX cũ trên MiniPC (nếu có)"
-
-  pm2 delete mediamtx 2>/dev/null || true
-
-  if command -v systemctl >/dev/null 2>&1; then
-    sudo systemctl disable --now mediamtx 2>/dev/null || true
-    sudo systemctl daemon-reload 2>/dev/null || true
-  fi
+  log "Kiểm tra MediaMTX local trên MiniPC"
 
   if [ -f "${APP_DIR}/scripts/mediamtx-stop.sh" ]; then
     sh "${APP_DIR}/scripts/mediamtx-stop.sh" || true
-  elif [ -f "${APP_DIR}/package.json" ] && grep -q '"mediamtx:stop"' "${APP_DIR}/package.json" 2>/dev/null; then
-    (cd "$APP_DIR" && npm run mediamtx:stop) || true
   fi
 
-  if [ -x "${APP_DIR}/mediamtx" ]; then
-    warn "Phát hiện binary mediamtx local tại ${APP_DIR}/mediamtx — production dùng MediaMTX trên Mbox, có thể xóa file này"
+  if [ ! -x "${APP_DIR}/mediamtx" ]; then
+    warn "Thiếu binary ./mediamtx — tải từ https://github.com/bluenviron/mediamtx/releases và đặt tại ${APP_DIR}/mediamtx"
   fi
 }
 
@@ -339,13 +331,14 @@ if [ "${SKIP_FIREWALL:-0}" != "1" ] && [ -f "${SCRIPT_DIR}/setup-firewall.sh" ];
   fi
 fi
 
-log "Khởi động PM2 (camera-service → monitor-env + edge agent)"
-pm2 delete camera-service monitor-env mediamtx 2>/dev/null || true
+log "Khởi động PM2 (mediamtx → camera-service → monitor-env + edge agent)"
+pm2 delete mediamtx camera-service monitor-env 2>/dev/null || true
 pm2 start ecosystem.config.cjs
 pm2 save
 
 log "Chờ service local sẵn sàng"
 sleep 3
+wait_http "http://127.0.0.1:9997/v3/config/global/get" "MediaMTX local" || true
 wait_http "http://127.0.0.1:4001/health" "camera-service" || true
 wait_http "http://127.0.0.1:3000/health" "monitor-env" || true
 
@@ -368,8 +361,9 @@ echo "────────────────────────�
 echo "MiniPC     : $(hostname 2>/dev/null || echo unknown)"
 echo "EDGE_ID    : ${EDGE_ID}"
 echo "Mbox WS    : ${MBOX_EDGE_WS_URL}"
-echo "MediaMTX   : ${MEDIAMTX_WEBRTC_URL} (WHEP)"
-echo "RTSP push  : $(mediamtx_rtsp_publish_endpoint 2>/dev/null || echo 'chưa cấu hình')"
+echo "MediaMTX local : http://127.0.0.1:8889 (MiniPC UI WHEP)"
+echo "MediaMTX central: ${MEDIAMTX_CENTRAL_WEBRTC_URL:-${MEDIAMTX_WEBRTC_URL:-chưa cấu hình}} (Mbox UI WHEP)"
+echo "RTSP relay    : $(mediamtx_rtsp_publish_endpoint 2>/dev/null || echo 'chưa cấu hình')"
 echo "Backup     : ${STAGING_BACKUP}"
 echo ""
 echo "Kiểm tra thêm:"

@@ -1,5 +1,15 @@
 import * as cameraClient from "../services/camera-client.service.js";
 
+function parseQualityId(request) {
+  const fromQuery = request.query?.quality;
+  const fromBody = request.body?.qualityId;
+  return fromBody ?? fromQuery ?? undefined;
+}
+
+function parseScope(request) {
+  return request.body?.scope || request.query?.scope || "local";
+}
+
 export async function listCamerasController(request, reply) {
   try {
     return await cameraClient.listCameras(request);
@@ -14,7 +24,12 @@ export async function listCamerasController(request, reply) {
 
 export async function getCameraStreamUrlController(request, reply) {
   try {
-    return await cameraClient.getCameraStreamUrl(request.params.id, request);
+    return await cameraClient.getCameraStreamUrl(
+      request.params.id,
+      request,
+      parseQualityId(request),
+      parseScope(request),
+    );
   } catch (err) {
     return reply
       .code(err.status === 404 ? 404 : 500)
@@ -22,27 +37,14 @@ export async function getCameraStreamUrlController(request, reply) {
   }
 }
 
-export async function liveMpegTsController(request, reply) {
-  try {
-    await cameraClient.proxyMpegTsStream(
-      Number(request.params.id),
-      reply,
-      request,
-    );
-  } catch (err) {
-    request.log.error(err);
-    if (!reply.raw.writableEnded) {
-      reply.code(500).send({ error: err.message });
-    }
-  }
-}
-
 export async function startCameraStreamController(request, reply) {
   try {
-    if (request.headers["x-edge-relay"] === "mbox") {
-      request.headers["x-edge-relay"] = "mbox";
-    }
-    return await cameraClient.startCameraStream(request.params.id, request);
+    return await cameraClient.startCameraStream(
+      request.params.id,
+      request,
+      parseQualityId(request),
+      parseScope(request),
+    );
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -51,7 +53,11 @@ export async function startCameraStreamController(request, reply) {
 
 export async function stopCameraStreamController(request, reply) {
   try {
-    return await cameraClient.stopCameraStream(request.params.id);
+    return await cameraClient.stopCameraStream(
+      request.params.id,
+      parseQualityId(request),
+      parseScope(request),
+    );
   } catch (err) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
@@ -60,18 +66,11 @@ export async function stopCameraStreamController(request, reply) {
 
 export async function restartCameraStreamController(request, reply) {
   try {
-    return await cameraClient.restartCameraStream(request.params.id, request);
-  } catch (err) {
-    request.log.error(err);
-    return reply.code(500).send({ error: err.message });
-  }
-}
-
-export async function forceCameraStreamFallbackController(request, reply) {
-  try {
-    return await cameraClient.forceCameraStreamFallback(
+    return await cameraClient.restartCameraStream(
       request.params.id,
       request,
+      parseQualityId(request),
+      parseScope(request),
     );
   } catch (err) {
     request.log.error(err);
@@ -79,13 +78,12 @@ export async function forceCameraStreamFallbackController(request, reply) {
   }
 }
 
-export async function cameraStreamWsController(socket, request) {
-  cameraClient.proxyCameraWebSocket(socket, Number(request.params.id));
-}
-
 export async function getCameraStreamOptionsController(request, reply) {
   try {
-    return await cameraClient.getCameraStreamOptions(request.params.id);
+    return await cameraClient.getCameraStreamOptions(
+      request.params.id,
+      parseQualityId(request),
+    );
   } catch (err) {
     return reply
       .code(err.status === 404 ? 404 : 500)
@@ -102,6 +100,8 @@ export async function updateCameraStreamQualityController(request, reply) {
     return await cameraClient.updateCameraStreamQuality(
       request.params.id,
       qualityId,
+      request,
+      parseScope(request),
     );
   } catch (err) {
     request.log.error(err);
@@ -121,7 +121,12 @@ export async function ptzController(request, reply) {
 
 export async function streamStatusController(request, reply) {
   try {
-    return await cameraClient.getStreamStatus(request.params.id, request);
+    return await cameraClient.getStreamStatus(
+      request.params.id,
+      request,
+      parseQualityId(request),
+      parseScope(request),
+    );
   } catch (err) {
     return reply
       .code(err.status === 404 ? 404 : 500)
