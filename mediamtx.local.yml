@@ -12,7 +12,7 @@ apiAllowOrigins:
   - "http://192.168.5.97:3000"
 
 metrics: yes
-metricsAddress: :9998
+metricsAddress: 127.0.0.1:9998
 
 webrtc: yes
 webrtcAddress: :8889

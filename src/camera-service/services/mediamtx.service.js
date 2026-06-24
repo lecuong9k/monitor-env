@@ -169,8 +169,8 @@ export function getCentralRtspPublishUrl(pathName) {
   return `${base}/${normalized}`;
 }
 
-/** @param {string} pathName */
-export function getLocalRtspReadUrl(pathName) {
+/** URL RTSP local cho path (publish hoặc read — cùng endpoint trên MediaMTX). */
+export function getLocalRtspUrl(pathName) {
   const base = config.mediamtx.local.rtspInternalUrl.replace(/\/$/, "");
   const normalized = String(pathName || "")
     .trim()
