@@ -2,17 +2,18 @@
 
 Kiến trúc hybrid: **MediaMTX local** trên MiniPC + **MediaMTX central** trên Mbox.
 
-## Luồng video
+## Luồng video (WebRTC + FFmpeg on-demand)
 
 ```
-Camera (LAN) ← pull on-demand ← MediaMTX local (:8889 WHEP) ← MiniPC UI
-                                    ↓ FFmpeg relay (khi remote)
-                              MediaMTX central (:8889 WHEP) ← Mbox UI
+Camera RTSP → FFmpeg transcode H.264 (1 process / quality)
+                 ├─► publish → MediaMTX local  → WHEP → MiniPC UI (khi có viewer local)
+                 └─► publish → MediaMTX central → WHEP → Mbox UI (khi có viewer remote)
 ```
 
-- **scope=local** (MiniPC UI): chỉ ingest local, WHEP local
-- **scope=remote** (Mbox temp-info-box): ingest local + relay FFmpeg lên central
-- **Không còn** fallback MPEG-TS/WebSocket
+- **scope=local**: chỉ publish local khi `localViewerCount > 0`
+- **scope=remote**: chỉ publish central khi `remoteViewerCount > 0`
+- Cả hai scope cùng lúc: một FFmpeg, hai output RTSP
+- Không viewer → dừng FFmpeg, không transcode
 
 ## Deploy Production — MiniPC
 

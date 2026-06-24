@@ -24,9 +24,8 @@ import {
   checkMediamtxAvailable,
   clearPathSource,
   ensurePathPublisher,
-  ensurePathSource,
   getCentralRtspPublishUrl,
-  getLocalRtspReadUrl,
+  getLocalRtspUrl,
   getWebRtcPageUrl,
   getWhepUrl,
   isCentralRelayEnabled,
@@ -48,6 +47,7 @@ import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
  *   centralRelayActive: boolean;
  *   localViewerCount: number;
  *   remoteViewerCount: number;
+ *   activePublishTargets: { local: boolean; central: boolean };
  *   mtxPathName: string | null;
  *   startingPromise: Promise<void> | null;
  *   idleSince: number | null;
@@ -111,6 +111,7 @@ function createQualityState(qualityId) {
     centralRelayActive: false,
     localViewerCount: 0,
     remoteViewerCount: 0,
+    activePublishTargets: { local: false, central: false },
     mtxPathName: null,
     startingPromise: null,
     idleSince: null,
@@ -207,33 +208,154 @@ function buildFfmpeg(
   return cmd;
 }
 
-function buildRtspRelayFfmpeg(source, publishUrl, quality, transcode) {
+/** @param {string} source @param {string[]} publishUrls @param {ReturnType<typeof getStreamQualityPreset>} quality */
+function buildMultiPublishFfmpeg(source, publishUrls, quality) {
+  if (!publishUrls.length) {
+    throw new Error("Thiếu URL publish MediaMTX");
+  }
+
   const inputOptions =
     INPUT_PROFILES[quality.inputProfile] ?? INPUT_PROFILES.lowLatency;
   const cmd = ffmpeg(source).inputOptions(inputOptions).noAudio();
+  const tc = quality.transcode;
 
-  if (transcode) {
-    const tc = quality.transcode;
-    if (tc.scale) {
-      cmd.videoFilters(tc.scale);
-    }
-    cmd
-      .videoCodec("libx264")
-      .addOutputOption("-preset", tc.preset)
-      .addOutputOption("-tune", "zerolatency")
-      .addOutputOption("-profile:v", "baseline")
-      .addOutputOption("-pix_fmt", "yuv420p")
-      .addOutputOption("-r", String(tc.fps))
-      .addOutputOption("-g", String(tc.fps * 2))
-      .addOutputOption("-maxrate", tc.maxrate)
-      .addOutputOption("-bufsize", tc.bufsize);
-  } else {
-    cmd.videoCodec("copy");
+  if (tc.scale) {
+    cmd.videoFilters(tc.scale);
+  }
+  cmd
+    .videoCodec("libx264")
+    .addOutputOption("-preset", tc.preset)
+    .addOutputOption("-tune", "zerolatency")
+    .addOutputOption("-profile:v", "baseline")
+    .addOutputOption("-pix_fmt", "yuv420p")
+    .addOutputOption("-r", String(tc.fps))
+    .addOutputOption("-g", String(tc.fps * 2))
+    .addOutputOption("-maxrate", tc.maxrate)
+    .addOutputOption("-bufsize", tc.bufsize);
+
+  const rtspOut = ["-f", "rtsp", "-rtsp_transport", "tcp"];
+  cmd.output(publishUrls[0]).outputOptions(rtspOut);
+  for (let i = 1; i < publishUrls.length; i++) {
+    cmd.output(publishUrls[i]).outputOptions(rtspOut);
   }
 
-  return cmd
-    .outputOptions(["-f", "rtsp", "-rtsp_transport", "tcp"])
-    .output(publishUrl);
+  return cmd;
+}
+
+/** @param {QualityStreamState} state */
+function getPublishTargets(state) {
+  return {
+    local: state.localViewerCount > 0,
+    central: state.remoteViewerCount > 0 && isCentralRelayEnabled(),
+  };
+}
+
+/** @param {{ local: boolean; central: boolean }} a @param {{ local: boolean; central: boolean }} b */
+function publishTargetsEqual(a, b) {
+  return a.local === b.local && a.central === b.central;
+}
+
+/** @param {QualityStreamState} state @param {string} mtxPath */
+async function stopFfmpegIngest(state, mtxPath) {
+  await stopFfmpegField(state, "ffmpegProcess");
+
+  const active = state.activePublishTargets;
+  if (active.local) {
+    try {
+      await clearPathSource("local", mtxPath);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (active.central) {
+    try {
+      await clearPathSource("central", mtxPath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  state.activePublishTargets = { local: false, central: false };
+  state.localMtxActive = false;
+  state.centralRelayActive = false;
+  state.transcodeMode = false;
+  state.centralIdleSince = null;
+}
+
+/**
+ * On-demand: chỉ publish tới MTX có viewer; restart khi tập đích thay đổi.
+ * @param {QualityStreamState} state
+ * @param {string} mtxPath
+ * @param {string} cameraRtsp
+ * @param {ReturnType<typeof getStreamQualityPreset>} quality
+ */
+async function syncFfmpegIngest(state, mtxPath, cameraRtsp, quality) {
+  if (!ffmpegPath) {
+    throw new Error(`Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`);
+  }
+
+  if (state.remoteViewerCount > 0 && !isCentralRelayEnabled()) {
+    throw new Error("MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL chưa cấu hình");
+  }
+
+  const desired = getPublishTargets(state);
+  const active = state.activePublishTargets;
+
+  if (!desired.local && !desired.central) {
+    await stopFfmpegIngest(state, mtxPath);
+    return;
+  }
+
+  if (publishTargetsEqual(desired, active) && state.ffmpegProcess) {
+    return;
+  }
+
+  await stopFfmpegField(state, "ffmpegProcess");
+
+  if (active.local && !desired.local) {
+    try {
+      await clearPathSource("local", mtxPath);
+    } catch {
+      /* ignore */
+    }
+  }
+  if (active.central && !desired.central) {
+    try {
+      await clearPathSource("central", mtxPath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  /** @type {string[]} */
+  const publishUrls = [];
+  if (desired.local) {
+    await ensurePathPublisher("local", mtxPath);
+    publishUrls.push(getLocalRtspUrl(mtxPath));
+  }
+  if (desired.central) {
+    await ensurePathPublisher("central", mtxPath);
+    publishUrls.push(getCentralRtspPublishUrl(mtxPath));
+  }
+
+  await launchFfmpeg(
+    state,
+    buildMultiPublishFfmpeg(cameraRtsp, publishUrls, quality),
+    "ffmpegProcess",
+  );
+
+  if (desired.local) {
+    await waitPathOnline("local", mtxPath, 20_000);
+  }
+  if (desired.central) {
+    await waitPathOnline("central", mtxPath, 20_000);
+  }
+
+  state.activePublishTargets = { ...desired };
+  state.localMtxActive = desired.local;
+  state.centralRelayActive = desired.central;
+  state.transcodeMode = true;
+  state.centralIdleSince = null;
 }
 
 /** @param {QualityStreamState} state @param {import('fluent-ffmpeg').FfmpegCommand} cmd */
@@ -326,96 +448,8 @@ async function startHlsStream(state, cameraId, qualityId, source, quality) {
   await waitForPlaylist(cameraId, qualityId);
 }
 
-/** @param {QualityStreamState} state @param {string} mtxPath @param {string} cameraRtsp */
-async function startLocalIngest(state, mtxPath, cameraRtsp) {
-  if (state.localMtxActive) return;
-
-  await ensurePathSource("local", mtxPath, cameraRtsp);
-  state.localMtxActive = true;
-}
-
-/** @param {QualityStreamState} state @param {string} mtxPath @param {ReturnType<typeof getStreamQualityPreset>} quality */
-async function startCentralRelay(state, mtxPath, quality) {
-  if (state.centralRelayActive) return;
-
-  if (!isCentralRelayEnabled()) {
-    throw new Error("MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL chưa cấu hình");
-  }
-  if (!ffmpegPath) {
-    throw new Error(
-      `Cần ffmpeg để relay lên MediaMTX central. ${getFfmpegInstallHint()}`,
-    );
-  }
-
-  const localSource = getLocalRtspReadUrl(mtxPath);
-  const publishUrl = getCentralRtspPublishUrl(mtxPath);
-
-  await ensurePathPublisher("central", mtxPath);
-
-  const tryStart = (transcode) =>
-    launchFfmpeg(
-      state,
-      buildRtspRelayFfmpeg(localSource, publishUrl, quality, transcode),
-      "ffmpegRelayProcess",
-    );
-
-  if (quality.transcodePolicy === "transcode") {
-    await tryStart(true);
-    state.transcodeMode = true;
-  } else {
-    try {
-      await tryStart(false);
-      state.transcodeMode = false;
-    } catch (copyErr) {
-      console.warn(
-        `[stream] central relay copy failed — transcode:`,
-        copyErr instanceof Error ? copyErr.message : copyErr,
-      );
-      state.ffmpegRelayProcess = null;
-      await tryStart(true);
-      state.transcodeMode = true;
-    }
-  }
-
-  await waitPathOnline("central", mtxPath, 20_000);
-  state.centralRelayActive = true;
-  state.centralIdleSince = null;
-}
-
-/** @param {QualityStreamState} state @param {string} mtxPath */
-async function stopCentralRelay(state, mtxPath) {
-  if (!state.centralRelayActive && !state.ffmpegRelayProcess) return;
-
-  await stopFfmpegField(state, "ffmpegRelayProcess");
-
-  if (state.centralRelayActive) {
-    try {
-      await clearPathSource("central", mtxPath);
-    } catch {
-      /* ignore */
-    }
-    state.centralRelayActive = false;
-  }
-  state.centralIdleSince = null;
-}
-
-/** @param {QualityStreamState} state @param {string} mtxPath */
-async function stopLocalIngest(state, mtxPath) {
-  if (!state.localMtxActive) return;
-
-  try {
-    await clearPathSource("local", mtxPath);
-  } catch {
-    /* ignore */
-  }
-  state.localMtxActive = false;
-}
-
 /** @param {QualityStreamState} state */
 function isStreaming(state) {
-  if (config.streamMode === "webrtc") {
-    return state.localMtxActive || state.centralRelayActive;
-  }
   return state.ffmpegProcess !== null;
 }
 
@@ -536,6 +570,9 @@ async function startQualityStreamInternal(
 
   if (state.startingPromise) {
     await state.startingPromise;
+    if (config.streamMode === "webrtc" && state.currentRtspUrl) {
+      await syncFfmpegIngest(state, mtxPath, state.currentRtspUrl, quality);
+    }
     return {
       ok: true,
       alreadyRunning: true,
@@ -558,17 +595,7 @@ async function startQualityStreamInternal(
 
   const startTask = async () => {
     if (config.streamMode === "webrtc") {
-      if (!state.localMtxActive) {
-        await startLocalIngest(state, mtxPath, source);
-      }
-
-      if (scope === "remote") {
-        if (!state.localMtxActive) {
-          throw new Error("Local ingest chưa sẵn sàng cho central relay");
-        }
-        await startCentralRelay(state, mtxPath, quality);
-      }
-
+      await syncFfmpegIngest(state, mtxPath, source, quality);
       return;
     }
 
@@ -583,30 +610,23 @@ async function startQualityStreamInternal(
     }
   };
 
-  const needsStart =
-    config.streamMode !== "webrtc" ||
-    !state.localMtxActive ||
-    (scope === "remote" && !state.centralRelayActive);
-
-  if (needsStart) {
-    state.startingPromise = startTask();
-    try {
-      await state.startingPromise;
-    } catch (err) {
-      if (scope === "local") {
-        state.localViewerCount = Math.max(0, state.localViewerCount - 1);
-      } else {
-        state.remoteViewerCount = Math.max(0, state.remoteViewerCount - 1);
-      }
-      throw err;
-    } finally {
-      state.startingPromise = null;
+  state.startingPromise = startTask();
+  try {
+    await state.startingPromise;
+  } catch (err) {
+    if (scope === "local") {
+      state.localViewerCount = Math.max(0, state.localViewerCount - 1);
+    } else {
+      state.remoteViewerCount = Math.max(0, state.remoteViewerCount - 1);
     }
+    throw err;
+  } finally {
+    state.startingPromise = null;
   }
 
   return {
     ok: true,
-    alreadyRunning: !needsStart,
+    alreadyRunning: false,
     ...getStreamStatus(cameraId, clientContext, resolvedQuality, scope),
   };
 }
@@ -650,30 +670,26 @@ export async function stopQualityStream(cameraId, qualityId, options = {}) {
 
   if (scope === "remote") {
     state.remoteViewerCount = Math.max(0, state.remoteViewerCount - 1);
-    if (state.remoteViewerCount > 0) {
-      return { ok: true, stopped: false, quality: resolvedQuality, scope };
-    }
-    await stopCentralRelay(state, mtxPath);
   } else {
     state.localViewerCount = Math.max(0, state.localViewerCount - 1);
-    if (state.localViewerCount > 0) {
-      return { ok: true, stopped: false, quality: resolvedQuality, scope };
-    }
+  }
+
+  const quality = getStreamQualityPreset(resolvedQuality);
+  if (config.streamMode === "webrtc" && state.currentRtspUrl) {
+    await syncFfmpegIngest(state, mtxPath, state.currentRtspUrl, quality);
   }
 
   if (state.localViewerCount === 0 && state.remoteViewerCount === 0) {
-    await stopCentralRelay(state, mtxPath);
-    await stopLocalIngest(state, mtxPath);
-    await stopFfmpegField(state, "ffmpegProcess");
-
-    state.currentRtspUrl = null;
-    state.mtxPathName = null;
-    byQuality.delete(resolvedQuality);
-    if (byQuality.size === 0) streams.delete(cameraId);
+    if (!isStreaming(state)) {
+      state.currentRtspUrl = null;
+      state.mtxPathName = null;
+      byQuality.delete(resolvedQuality);
+      if (byQuality.size === 0) streams.delete(cameraId);
+    }
     return { ok: true, stopped: true, quality: resolvedQuality, scope };
   }
 
-  return { ok: true, stopped: true, quality: resolvedQuality, scope };
+  return { ok: true, stopped: false, quality: resolvedQuality, scope };
 }
 
 export async function stopCameraStream(cameraId, qualityId, options = {}) {
@@ -810,9 +826,7 @@ export async function cleanupOrphanQualityStream(cameraId, qualityId) {
   state.idleSince = null;
   state.centralIdleSince = null;
 
-  await stopCentralRelay(state, mtxPath);
-  await stopLocalIngest(state, mtxPath);
-  await stopFfmpegField(state, "ffmpegProcess");
+  await stopFfmpegIngest(state, mtxPath);
 
   state.currentRtspUrl = null;
   state.mtxPathName = null;
