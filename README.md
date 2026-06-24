@@ -2,18 +2,28 @@
 
 Kiến trúc hybrid: **MediaMTX local** trên MiniPC + **MediaMTX central** trên Mbox.
 
-## Luồng video (WebRTC + FFmpeg on-demand)
+## Luồng video (WebRTC + FFmpeg hub + relay)
 
 ```
-Camera RTSP → FFmpeg transcode H.264 (1 process / quality)
-                 ├─► publish → MediaMTX local  → WHEP → MiniPC UI (khi có viewer local)
-                 └─► publish → MediaMTX central → WHEP → Mbox UI (khi có viewer remote)
+Camera RTSP → FFmpeg transcode H.264 → MediaMTX local → WHEP → MiniPC UI
+                              │
+                              └─► FFmpeg relay (copy) → MediaMTX central → WHEP → Mbox UI
 ```
 
-- **scope=local**: chỉ publish local khi `localViewerCount > 0`
-- **scope=remote**: chỉ publish central khi `remoteViewerCount > 0`
-- Cả hai scope cùng lúc: một FFmpeg, hai output RTSP
-- Không viewer → dừng FFmpeg, không transcode
+- **Primary ingest**: transcode khi có bất kỳ viewer nào (`localViewerCount + remoteViewerCount > 0`) — luôn publish vào **local MTX** (hub)
+- **Central relay**: copy RTSP local → central khi `remoteViewerCount > 0` — start/stop **độc lập**, không restart transcode
+- **scope=local** / **scope=remote**: chỉ tăng/giảm ref-count; join/leave một scope không làm giật viewer scope kia
+- Không viewer → dừng cả primary và relay
+
+### Viewer session (Hướng A)
+
+Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop` / `quality` / `heartbeat`.
+
+- `POST /cameras/:id/stream/heartbeat` — gia hạn session (~30s từ client)
+- Viewer hết heartbeat sau `STREAM_VIEWER_HEARTBEAT_TTL_MS` (mặc định 45s) → lifecycle gỡ ghost count
+- Viewer còn trong Map nhưng MTX `readerCount=0` liên tục sau `STREAM_READER_GHOST_MS` (mặc định 30s) → expire ghost + sync pipeline
+- Startup + periodic sweep: dọn path MTX `-(main|sub|mobile)` không còn trong `streams` Map
+- `POST /cameras/:id/stream/restart` — **deprecated (410)**; refresh client = `status` + reconnect WHEP
 
 ## Deploy Production — MiniPC
 
@@ -29,6 +39,11 @@ Camera RTSP → FFmpeg transcode H.264 (1 process / quality)
 | `MEDIAMTX_CENTRAL_API_URL`          | `http://<mbox-ip>:9997`                            |
 | `MEDIAMTX_CENTRAL_WEBRTC_URL`       | `http://<mbox-ip>:8889`                            |
 | `MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL` | `rtsp://<mbox-ip>:8554`                            |
+| `STREAM_VIEWER_HEARTBEAT_TTL_MS`    | 45000 — TTL viewer không heartbeat                 |
+| `STREAM_READER_GHOST_MS`            | 30000 — ghost khi không còn MTX reader             |
+| `STREAM_IDLE_POLL_MS`               | 15000 — chu kỳ lifecycle poller                    |
+| `STREAM_IDLE_STOP_MS`               | 120000 — dừng ingest khi idle                      |
+| `STREAM_MTX_SWEEP_EVERY_POLLS`      | 4 — sweep path MTX mỗi N chu kỳ                    |
 
 ### 2) MediaMTX local
 

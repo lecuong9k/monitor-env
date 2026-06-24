@@ -41,6 +41,19 @@ function bodyWithStreamOptions(qualityId, extra = {}) {
   return JSON.stringify(body);
 }
 
+function streamExtraFromRequest(request, scope = "local") {
+  const extra = { scope };
+  const raw = request?.body || {};
+  if (raw.viewerId) extra.viewerId = String(raw.viewerId);
+  if (raw.previousViewerId) {
+    extra.previousViewerId = String(raw.previousViewerId);
+  }
+  if (raw.previousQualityId) {
+    extra.previousQualityId = String(raw.previousQualityId);
+  }
+  return extra;
+}
+
 async function parseResponse(res) {
   const text = await res.text();
   let body = null;
@@ -151,16 +164,42 @@ export async function startCameraStream(
     `/cameras/${cameraId}/stream/start`,
     {
       method: "POST",
-      body: bodyWithStreamOptions(qualityId, { scope }),
+      body: bodyWithStreamOptions(
+        qualityId,
+        streamExtraFromRequest(request, scope),
+      ),
     },
     request,
   );
 }
 
-export async function stopCameraStream(cameraId, qualityId, scope = "local") {
+export async function stopCameraStream(
+  cameraId,
+  request,
+  qualityId,
+  scope = "local",
+) {
   return cameraServiceFetch(`/cameras/${cameraId}/stream/stop`, {
     method: "POST",
-    body: bodyWithStreamOptions(qualityId, { scope }),
+    body: bodyWithStreamOptions(
+      qualityId,
+      streamExtraFromRequest(request, scope),
+    ),
+  });
+}
+
+export async function heartbeatCameraStream(
+  cameraId,
+  request,
+  qualityId,
+  scope = "local",
+) {
+  return cameraServiceFetch(`/cameras/${cameraId}/stream/heartbeat`, {
+    method: "POST",
+    body: bodyWithStreamOptions(
+      qualityId,
+      streamExtraFromRequest(request, scope),
+    ),
   });
 }
 
@@ -190,6 +229,11 @@ export async function updateCameraStreamQuality(
   const body = { qualityId, scope };
   if (previousQualityId) {
     body.previousQualityId = previousQualityId;
+  }
+  const raw = request?.body || {};
+  if (raw.viewerId) body.viewerId = String(raw.viewerId);
+  if (raw.previousViewerId) {
+    body.previousViewerId = String(raw.previousViewerId);
   }
   return cameraServiceFetch(
     `/cameras/${cameraId}/stream/quality`,

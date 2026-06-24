@@ -13,7 +13,10 @@ import {
   updateCameraRecord,
   updateCameraStreamQuality,
 } from "../services/camera.service.js";
-import { getStreamStatus } from "../services/stream.service.js";
+import {
+  getStreamStatus,
+  heartbeatCameraStream,
+} from "../services/stream.service.js";
 import { resolveStreamScope } from "../config.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 import { parseQualityForCamera } from "../utils/stream-quality-params.js";
@@ -24,7 +27,15 @@ function streamOptionsFromBody(body = {}) {
   if (previousQualityId) {
     options.previousQualityId = previousQualityId;
   }
+  const viewerId = String(body.viewerId || "").trim();
+  if (viewerId) options.viewerId = viewerId;
+  const previousViewerId = String(body.previousViewerId || "").trim();
+  if (previousViewerId) options.previousViewerId = previousViewerId;
   return options;
+}
+
+function errorStatus(err, fallback = 500) {
+  return typeof err?.status === "number" ? err.status : fallback;
 }
 
 export async function listCamerasController(request) {
@@ -95,7 +106,7 @@ export async function startCameraStreamController(request, reply) {
     return await startCameraStream(cameraId, clientContext, qualityId, options);
   } catch (err) {
     request.log.error(err);
-    return reply.code(500).send({ error: err.message });
+    return reply.code(errorStatus(err)).send({ error: err.message });
   }
 }
 
@@ -107,7 +118,7 @@ export async function stopCameraStreamController(request, reply) {
     return await stopCameraStream(cameraId, qualityRaw || undefined, options);
   } catch (err) {
     request.log.error(err);
-    return reply.code(500).send({ error: err.message });
+    return reply.code(errorStatus(err)).send({ error: err.message });
   }
 }
 
@@ -125,7 +136,19 @@ export async function restartCameraStreamController(request, reply) {
     );
   } catch (err) {
     request.log.error(err);
-    return reply.code(500).send({ error: err.message });
+    return reply.code(errorStatus(err)).send({ error: err.message });
+  }
+}
+
+export async function heartbeatCameraStreamController(request, reply) {
+  try {
+    const cameraId = Number(request.params.id);
+    const qualityId = parseQualityForCamera(request, cameraId);
+    const options = streamOptionsFromBody(request.body);
+    return await heartbeatCameraStream(cameraId, qualityId, options);
+  } catch (err) {
+    request.log.error(err);
+    return reply.code(errorStatus(err, 400)).send({ error: err.message });
   }
 }
 

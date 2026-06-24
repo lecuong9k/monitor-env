@@ -117,11 +117,19 @@ export const config = {
     },
   },
   /** Dừng local ingest sau N ms không còn local MTX reader (0 = tắt). */
-  streamIdleStopMs: Number(process.env.STREAM_IDLE_STOP_MS) || 300_000,
-  streamIdlePollMs: Number(process.env.STREAM_IDLE_POLL_MS) || 60_000,
+  streamIdleStopMs: Number(process.env.STREAM_IDLE_STOP_MS) || 120_000,
+  streamIdlePollMs: Number(process.env.STREAM_IDLE_POLL_MS) || 15_000,
   /** Safety: dừng central relay khi không còn reader và remoteViewerCount = 0. */
   centralRelayIdleStopMs:
-    Number(process.env.CENTRAL_RELAY_IDLE_STOP_MS) || 120_000,
+    Number(process.env.CENTRAL_RELAY_IDLE_STOP_MS) || 60_000,
+  /** TTL viewer không heartbeat thì gỡ khỏi session (ms). */
+  viewerHeartbeatTtlMs:
+    Number(process.env.STREAM_VIEWER_HEARTBEAT_TTL_MS) || 45_000,
+  /** Viewer còn trong Map nhưng MTX reader=0 liên tục → coi ghost (ms). */
+  streamReaderGhostMs: Number(process.env.STREAM_READER_GHOST_MS) || 30_000,
+  /** Mỗi N chu kỳ poll chạy sweep path MTX không quản lý (0 = tắt). */
+  streamMtxSweepEveryPolls:
+    Number(process.env.STREAM_MTX_SWEEP_EVERY_POLLS) || 4,
 };
 
 /** @typedef {'local' | 'central'} MtxTarget */
