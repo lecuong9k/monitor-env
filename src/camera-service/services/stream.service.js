@@ -2,7 +2,7 @@ import { access, mkdir, readFile, rm } from "node:fs/promises";
 import { constants } from "node:fs";
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
+import { v4 as uuidv4 } from "uuid";
 import ffmpeg from "fluent-ffmpeg";
 import { config, resolveStreamScope } from "../config.js";
 import {
@@ -157,7 +157,7 @@ function syncViewerCounts(state) {
 function normalizeViewerId(raw) {
   const id = String(raw || "").trim();
   if (id.length >= 8 && id.length <= 128) return id;
-  return crypto.randomUUID();
+  return uuidv4();
 }
 
 /**
