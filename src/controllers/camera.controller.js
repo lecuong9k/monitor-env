@@ -55,12 +55,27 @@ export async function stopCameraStreamController(request, reply) {
   try {
     return await cameraClient.stopCameraStream(
       request.params.id,
+      request,
       parseQualityId(request),
       parseScope(request),
     );
   } catch (err) {
     request.log.error(err);
-    return reply.code(500).send({ error: err.message });
+    return reply.code(err.status || 500).send({ error: err.message });
+  }
+}
+
+export async function heartbeatCameraStreamController(request, reply) {
+  try {
+    return await cameraClient.heartbeatCameraStream(
+      request.params.id,
+      request,
+      parseQualityId(request),
+      parseScope(request),
+    );
+  } catch (err) {
+    request.log.error(err);
+    return reply.code(err.status || 400).send({ error: err.message });
   }
 }
 
@@ -74,7 +89,7 @@ export async function restartCameraStreamController(request, reply) {
     );
   } catch (err) {
     request.log.error(err);
-    return reply.code(500).send({ error: err.message });
+    return reply.code(err.status || 500).send({ error: err.message });
   }
 }
 

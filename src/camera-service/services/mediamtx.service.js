@@ -253,3 +253,100 @@ export async function clearPathSource(target, pathName) {
     throw err;
   }
 }
+
+/** @param {MtxTarget} target */
+export async function listPathNames(target) {
+  const data = await mtxFetch(target, "/v3/paths/list");
+  if (!data) return [];
+
+  if (Array.isArray(data.items)) {
+    return data.items
+      .map((item) => String(item?.name || "").trim())
+      .filter(Boolean);
+  }
+
+  if (typeof data === "object") {
+    return Object.keys(data).filter((key) => key && key !== "items");
+  }
+
+  return [];
+}
+
+/** @param {string} pathName */
+export function isManagedCameraQualityPath(pathName) {
+  return QUALITY_SUFFIX_RE.test(String(pathName || "").trim());
+}
+
+/**
+ * @param {Set<string>} managedPaths
+ * @param {MtxTarget} [target]
+ */
+export async function reconcileOrphanMtxPathsOnStartup(
+  managedPaths,
+  target = "local",
+) {
+  const names = await listPathNames(target);
+  let cleared = 0;
+
+  for (const pathName of names) {
+    if (!isManagedCameraQualityPath(pathName)) continue;
+    if (managedPaths.has(pathName)) continue;
+
+    await clearPathSource(target, pathName);
+    cleared += 1;
+    console.log(
+      `[stream-reconcile] Cleared orphan MTX path ${target}:${pathName}`,
+    );
+  }
+
+  if (isCentralRelayEnabled() && target === "local") {
+    try {
+      const central = await reconcileOrphanMtxPathsOnStartup(
+        managedPaths,
+        "central",
+      );
+      cleared += central.cleared;
+    } catch (err) {
+      console.warn(
+        "[stream-reconcile] Central reconcile skipped:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return { cleared };
+}
+
+/**
+ * @param {Set<string>} managedPaths
+ * @param {MtxTarget} [target]
+ */
+export async function sweepUnmanagedMtxPaths(managedPaths, target = "local") {
+  const names = await listPathNames(target);
+  let cleared = 0;
+
+  for (const pathName of names) {
+    if (!isManagedCameraQualityPath(pathName)) continue;
+    if (managedPaths.has(pathName)) continue;
+
+    await clearPathSource(target, pathName);
+    cleared += 1;
+    console.log(
+      `[stream-reconcile] Swept unmanaged MTX path ${target}:${pathName}`,
+    );
+  }
+
+  if (isCentralRelayEnabled() && target === "local") {
+    try {
+      const central = await sweepUnmanagedMtxPaths(managedPaths, "central");
+      cleared += central.cleared;
+    } catch (err) {
+      console.warn(
+        "[stream-reconcile] Central sweep skipped:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
+  return { cleared };
+}

@@ -1,13 +1,22 @@
 import { config } from "../config.js";
-import { countPathReaders, getPathStats } from "./mediamtx.service.js";
+import {
+  countPathReaders,
+  getPathStats,
+  sweepUnmanagedMtxPaths,
+} from "./mediamtx.service.js";
 import {
   getLifecycleTargets,
+  getManagedMtxPathNames,
   stopQualityStream,
   cleanupOrphanQualityStream,
+  stopOrphanCentralRelay,
+  maintainViewerSessions,
+  expireGhostViewersNoReaders,
 } from "./stream.service.js";
 
 /** @type {ReturnType<typeof setInterval> | null} */
 let poller = null;
+let pollCount = 0;
 
 /**
  * @param {{ cameraId: number, qualityId: string, state: import('./stream.service.js').QualityStreamState, mtxPathName: string | null }} target
@@ -15,10 +24,102 @@ let poller = null;
 async function evaluateTarget(target) {
   const { cameraId, qualityId, state, mtxPathName } = target;
 
-  if (state.localViewerCount > 0 || state.remoteViewerCount > 0) {
+  await maintainViewerSessions(cameraId, qualityId, state, mtxPathName);
+
+  const hasViewers = state.localViewers.size + state.remoteViewers.size > 0;
+
+  if (hasViewers) {
+    if (mtxPathName) {
+      let localReaders = 0;
+      let centralReaders = 0;
+      try {
+        const localStats = await getPathStats("local", mtxPathName);
+        localReaders = countPathReaders(localStats);
+        if (state.centralRelayActive || state.remoteViewers.size > 0) {
+          const centralStats = await getPathStats("central", mtxPathName);
+          centralReaders = countPathReaders(centralStats);
+        }
+      } catch (err) {
+        console.warn(
+          `[stream-lifecycle] Không đọc được reader stats path ${mtxPathName}:`,
+          err instanceof Error ? err.message : err,
+        );
+        state.readerGhostSince = null;
+        state.idleSince = null;
+        state.centralIdleSince = null;
+        return;
+      }
+
+      const warmingRemoteRelay =
+        state.remoteViewers.size > 0 &&
+        !state.centralRelayActive &&
+        (state.startingPromise != null || state.primaryActive);
+
+      const activeReaders =
+        (state.localViewers.size > 0 ? localReaders : 0) +
+        (state.remoteViewers.size > 0 && state.centralRelayActive
+          ? centralReaders
+          : 0);
+
+      if (activeReaders > 0 || warmingRemoteRelay) {
+        state.readerGhostSince = null;
+        state.idleSince = null;
+        state.centralIdleSince = null;
+        return;
+      }
+
+      const ghostMs = config.streamReaderGhostMs;
+      if (ghostMs > 0) {
+        const now = Date.now();
+        if (state.readerGhostSince == null) {
+          state.readerGhostSince = now;
+          return;
+        }
+        if (now - state.readerGhostSince >= ghostMs) {
+          console.log(
+            `[stream-lifecycle] Reader ghost expire camera ${cameraId} quality ${qualityId}`,
+          );
+          await expireGhostViewersNoReaders(
+            cameraId,
+            qualityId,
+            state,
+            mtxPathName,
+          );
+          return;
+        }
+        return;
+      }
+    }
+
     state.idleSince = null;
     state.centralIdleSince = null;
     return;
+  }
+
+  state.readerGhostSince = null;
+
+  if (mtxPathName && (state.primaryActive || state.centralRelayActive)) {
+    let localReaders = 0;
+    let centralReaders = 0;
+    try {
+      const localStats = await getPathStats("local", mtxPathName);
+      localReaders = countPathReaders(localStats);
+      if (state.centralRelayActive) {
+        const centralStats = await getPathStats("central", mtxPathName);
+        centralReaders = countPathReaders(centralStats);
+      }
+    } catch (err) {
+      console.warn(
+        `[stream-lifecycle] Không đọc được reader stats path ${mtxPathName}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+
+    if (localReaders > 0 || centralReaders > 0) {
+      state.idleSince = null;
+      state.centralIdleSince = null;
+      return;
+    }
   }
 
   const orphanResult = await cleanupOrphanQualityStream(cameraId, qualityId);
@@ -93,12 +194,31 @@ async function evaluateTarget(target) {
         `[stream-lifecycle] Central relay idle stop camera ${cameraId} quality ${qualityId}`,
       );
       state.centralIdleSince = null;
-      await stopQualityStream(cameraId, qualityId, { scope: "remote" });
+      await stopOrphanCentralRelay(cameraId, qualityId);
     }
   }
 }
 
 async function pollOnce() {
+  pollCount += 1;
+
+  const sweepEvery = config.streamMtxSweepEveryPolls;
+  if (sweepEvery > 0 && pollCount % sweepEvery === 0) {
+    try {
+      const result = await sweepUnmanagedMtxPaths(getManagedMtxPathNames());
+      if (result.cleared > 0) {
+        console.log(
+          `[stream-lifecycle] MTX sweep cleared ${result.cleared} path(s)`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        "[stream-lifecycle] MTX sweep error:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+
   const targets = getLifecycleTargets();
   for (const target of targets) {
     await evaluateTarget(target);
@@ -108,6 +228,7 @@ async function pollOnce() {
 export function startStreamLifecyclePoller() {
   if (poller) return;
 
+  pollCount = 0;
   const intervalMs = Math.max(config.streamIdlePollMs, 15_000);
   poller = setInterval(() => {
     void pollOnce().catch((err) => {
@@ -123,7 +244,7 @@ export function startStreamLifecyclePoller() {
   }
 
   console.log(
-    `[stream-lifecycle] Poller started (poll=${intervalMs}ms, localIdle=${config.streamIdleStopMs}ms, centralRelayIdle=${config.centralRelayIdleStopMs}ms)`,
+    `[stream-lifecycle] Poller started (poll=${intervalMs}ms, localIdle=${config.streamIdleStopMs}ms, centralRelayIdle=${config.centralRelayIdleStopMs}ms, readerGhost=${config.streamReaderGhostMs}ms)`,
   );
 }
 
@@ -131,4 +252,5 @@ export function stopStreamLifecyclePoller() {
   if (!poller) return;
   clearInterval(poller);
   poller = null;
+  pollCount = 0;
 }

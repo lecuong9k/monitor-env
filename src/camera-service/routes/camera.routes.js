@@ -8,6 +8,7 @@ import {
   listCamerasRegistryController,
   ptzController,
   restartCameraStreamController,
+  heartbeatCameraStreamController,
   startCameraStreamController,
   stopCameraStreamController,
   streamStatusController,
@@ -28,6 +29,10 @@ export default async function cameraRoutes(fastify) {
   fastify.get("/cameras/:id/stream/status", streamStatusController);
   fastify.post("/cameras/:id/stream/start", startCameraStreamController);
   fastify.post("/cameras/:id/stream/stop", stopCameraStreamController);
+  fastify.post(
+    "/cameras/:id/stream/heartbeat",
+    heartbeatCameraStreamController,
+  );
   fastify.post("/cameras/:id/stream/restart", restartCameraStreamController);
   fastify.post(
     "/cameras/:id/stream/quality",
