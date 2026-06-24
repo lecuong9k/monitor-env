@@ -12,7 +12,7 @@ apiAllowOrigins:
   - "http://192.168.5.97:3000"
 
 metrics: yes
-metricsAddress: 127.0.0.1:9998
+metricsAddress: :9998
 
 webrtc: yes
 webrtcAddress: :8889
@@ -30,7 +30,7 @@ webrtcICEServers2:
   - url: stun:stun.l.google.com:19302
 
 rtsp: yes
-rtspAddress: 127.0.0.1:8554
+rtspAddress: :8554
 rtspTransports: [tcp]
 
 rtmp: no
