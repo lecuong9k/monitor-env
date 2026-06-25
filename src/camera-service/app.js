@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify from "fastify/fastify.js";
 import fastifyStatic from "@fastify/static";
 import { registerWebsocket } from "../plugins/websocket.js";
 import cameraRoutes from "./routes/camera.routes.js";
@@ -9,6 +9,7 @@ import {
   initStreamService,
   stopAllStreams,
 } from "./services/stream.service.js";
+import { stopAllTalkbackSessions } from "./services/talkback.service.js";
 import { assertSecretsKeyConfigured } from "../utils/secrets.js";
 
 const BODY_LIMIT = Number(process.env.BODY_LIMIT_BYTES) || 1024 * 64;
@@ -63,6 +64,7 @@ start();
 
 const shutdown = () => {
   stopAllStreams();
+  stopAllTalkbackSessions();
   process.exit(0);
 };
 

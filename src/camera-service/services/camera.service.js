@@ -13,6 +13,7 @@ import {
   sendPtz,
   stopMove,
 } from "./onvif.service.js";
+import { getTalkbackCapabilities } from "./talkback.service.js";
 import { config, resolveStreamScope } from "../config.js";
 import {
   getStreamInfo,
@@ -116,6 +117,14 @@ export async function executePtz(cameraId, body) {
 
   await sendPtz(cameraId, action, speed, { x: body?.x, y: body?.y });
   return { success: true };
+}
+
+export async function fetchTalkbackCapabilities(cameraId, qualityId = "main") {
+  const camera = findCameraById(cameraId);
+  if (!camera) {
+    throw new Error("Không tìm thấy camera");
+  }
+  return getTalkbackCapabilities(cameraId, qualityId);
 }
 
 export function createCameraRecord(body) {

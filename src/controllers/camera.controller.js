@@ -135,6 +135,88 @@ export async function ptzController(request, reply) {
   }
 }
 
+export async function talkbackCapabilitiesController(request, reply) {
+  try {
+    return await cameraClient.getTalkbackCapabilities(
+      request.params.id,
+      request,
+      parseQualityId(request),
+    );
+  } catch (err) {
+    request.log.error(err);
+    return reply
+      .code(err.status === 404 ? 404 : 500)
+      .send({ error: err.message });
+  }
+}
+
+export async function talkbackWebSocketController(socket, request) {
+  const cameraId = request.params.id;
+  const qualityId = parseQualityId(request);
+  const upstreamUrl = cameraClient.getTalkbackWsUpstreamUrl(
+    cameraId,
+    qualityId,
+  );
+  const apiKey = cameraClient.getCameraServiceApiKey();
+
+  const { default: WebSocket } = await import("ws");
+  const upstream = new WebSocket(upstreamUrl, {
+    headers: {
+      "X-Camera-Service-Key": apiKey,
+    },
+  });
+
+  let closed = false;
+  const closeBoth = (code, reason) => {
+    if (closed) return;
+    closed = true;
+    try {
+      socket.close(code, reason);
+    } catch {
+      // ignore
+    }
+    try {
+      upstream.close(code, reason);
+    } catch {
+      // ignore
+    }
+  };
+
+  upstream.on("open", () => {
+    // upstream ready
+  });
+
+  upstream.on("message", (data, isBinary) => {
+    if (socket.readyState === 1) {
+      socket.send(data, { binary: isBinary });
+    }
+  });
+
+  upstream.on("close", (code, reason) => {
+    closeBoth(code, reason.toString());
+  });
+
+  upstream.on("error", (err) => {
+    request.log.error(err);
+    closeBoth(1011, "upstream error");
+  });
+
+  socket.on("message", (data, isBinary) => {
+    if (upstream.readyState === WebSocket.OPEN) {
+      upstream.send(data, { binary: isBinary });
+    }
+  });
+
+  socket.on("close", (code, reason) => {
+    closeBoth(code, reason.toString());
+  });
+
+  socket.on("error", (err) => {
+    request.log.error(err);
+    closeBoth(1011, "client error");
+  });
+}
+
 export async function streamStatusController(request, reply) {
   try {
     return await cameraClient.getStreamStatus(

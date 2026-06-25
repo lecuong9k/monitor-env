@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import Fastify from "fastify";
+import Fastify from "fastify/fastify.js";
 import fastifyStatic from "@fastify/static";
 import configsRoutes from "./routes/config.route.js";
 import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
