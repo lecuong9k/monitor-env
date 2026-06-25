@@ -8,6 +8,8 @@ import {
   startCameraStreamController,
   stopCameraStreamController,
   streamStatusController,
+  talkbackCapabilitiesController,
+  talkbackWebSocketController,
   updateCameraStreamQualityController,
 } from "../controllers/camera.controller.js";
 import {
@@ -40,4 +42,13 @@ export default async function cameraRoutes(fastify) {
     updateCameraStreamQualityController,
   );
   fastify.post("/cameras/:id/ptz", ptzController);
+  fastify.get(
+    "/cameras/:id/talkback/capabilities",
+    talkbackCapabilitiesController,
+  );
+  fastify.get(
+    "/cameras/:id/talkback/ws",
+    { websocket: true },
+    talkbackWebSocketController,
+  );
 }

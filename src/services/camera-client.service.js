@@ -264,6 +264,25 @@ export async function executePtz(cameraId, body) {
   });
 }
 
+export async function getTalkbackCapabilities(cameraId, request, qualityId) {
+  const qs = qualityQuery(qualityId);
+  return cameraServiceFetch(
+    `/cameras/${cameraId}/talkback/capabilities${qs}`,
+    {},
+    request,
+  );
+}
+
+export function getTalkbackWsUpstreamUrl(cameraId, qualityId) {
+  const base = BASE_URL.replace(/^http/i, "ws").replace(/\/$/, "");
+  const qs = qualityQuery(qualityId);
+  return `${base}/cameras/${cameraId}/talkback/ws${qs}`;
+}
+
+export function getCameraServiceApiKey() {
+  return API_KEY;
+}
+
 export async function checkCameraServiceHealth() {
   try {
     const res = await fetch(`${BASE_URL.replace(/\/$/, "")}/health`);

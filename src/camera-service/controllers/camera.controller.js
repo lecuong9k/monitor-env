@@ -2,6 +2,7 @@ import {
   createCameraRecord,
   deleteCameraRecord,
   executePtz,
+  fetchTalkbackCapabilities,
   getCameraById,
   getCameraStreamOptions,
   getCameraStreamUrl,
@@ -20,6 +21,7 @@ import {
 import { resolveStreamScope } from "../config.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 import { parseQualityForCamera } from "../utils/stream-quality-params.js";
+import { handleTalkbackWebSocket } from "../services/talkback.service.js";
 
 function streamOptionsFromBody(body = {}) {
   const options = { scope: resolveStreamScope(body.scope) };
@@ -189,6 +191,24 @@ export async function ptzController(request, reply) {
     request.log.error(err);
     return reply.code(500).send({ error: err.message });
   }
+}
+
+export async function talkbackCapabilitiesController(request, reply) {
+  try {
+    const cameraId = Number(request.params.id);
+    const qualityId = parseQualityForCamera(request, cameraId);
+    return await fetchTalkbackCapabilities(cameraId, qualityId);
+  } catch (err) {
+    request.log.error(err);
+    const status = err.message.includes("Không tìm thấy") ? 404 : 500;
+    return reply.code(status).send({ error: err.message });
+  }
+}
+
+export async function talkbackWebSocketController(socket, request) {
+  const cameraId = Number(request.params.id);
+  const qualityId = parseQualityForCamera(request, cameraId);
+  handleTalkbackWebSocket(cameraId, socket, { qualityId });
 }
 
 export async function streamStatusController(request) {

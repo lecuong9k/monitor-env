@@ -77,6 +77,17 @@ export async function resolveRtspUrl(cameraId, subtype = 0) {
   return buildRtspUrl(camera, subtype);
 }
 
+/** @param {number} cameraId */
+export async function getAudioOutputs(cameraId) {
+  const camera = await getCam(cameraId);
+  return new Promise((resolve, reject) => {
+    camera.getAudioOutputs((err, outputs) => {
+      if (err) reject(err);
+      else resolve(outputs);
+    });
+  });
+}
+
 const HOME_PRESET_NAME = "Home";
 
 function presetName(preset) {
