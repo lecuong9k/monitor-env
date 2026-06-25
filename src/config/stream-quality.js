@@ -6,6 +6,7 @@
  * @typedef {{
  *   preset: string;
  *   fps: number;
+ *   gop: number;
  *   maxrate: string;
  *   bufsize: string;
  *   scale?: string;
@@ -30,10 +31,11 @@ export const STREAM_QUALITY_PRESETS = {
     inputProfile: "lowLatency",
     transcodePolicy: "copyFirst",
     transcode: {
-      preset: "veryfast",
+      preset: "ultrafast",
       fps: 25,
-      maxrate: "6M",
-      bufsize: "12M",
+      gop: 25,
+      maxrate: "4M",
+      bufsize: "8M",
     },
   },
   sub: {
@@ -42,14 +44,13 @@ export const STREAM_QUALITY_PRESETS = {
     description: "subtype=1 · tiêu chuẩn",
     subtype: 1,
     inputProfile: "stable",
-    // Sub stream camera thường HEVC / timestamp lệch — chuẩn hóa H.264 cho mpegts.js
-    transcodePolicy: "transcode",
+    transcodePolicy: "copyFirst",
     transcode: {
-      preset: "veryfast",
+      preset: "ultrafast",
       fps: 20,
-      maxrate: "2.5M",
-      bufsize: "5M",
-      scale: "scale=-2:720",
+      gop: 20,
+      maxrate: "2M",
+      bufsize: "4M",
     },
   },
   mobile: {
@@ -62,9 +63,9 @@ export const STREAM_QUALITY_PRESETS = {
     transcode: {
       preset: "ultrafast",
       fps: 15,
-      maxrate: "1.5M",
-      bufsize: "3M",
-      scale: "scale=-2:480",
+      gop: 15,
+      maxrate: "1.2M",
+      bufsize: "2.4M",
     },
   },
 };

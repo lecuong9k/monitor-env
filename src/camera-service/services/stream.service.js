@@ -34,6 +34,13 @@ import {
   waitPathOnline,
 } from "./mediamtx.service.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
+import { resolveActiveVideoEncoder } from "../utils/ffmpeg-encoder.js";
+import {
+  applyAudioOutput,
+  applyVideoOutput,
+  getFallbackEncoder,
+} from "../utils/ffmpeg-output.js";
+import { probeRtspStream } from "../utils/rtsp-probe.js";
 
 /**
  * @typedef {import('../../config/stream-quality.js').StreamQualityId} StreamQualityId
@@ -58,6 +65,7 @@ import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
  *   idleSince: number | null;
  *   centralIdleSince: number | null;
  *   readerGhostSince: number | null;
+ *   streamProbe: import('../utils/rtsp-probe.js').RtspStreamProbe | null;
  * }} QualityStreamState
  */
 
@@ -127,6 +135,7 @@ function createQualityState(qualityId) {
     idleSince: null,
     centralIdleSince: null,
     readerGhostSince: null,
+    streamProbe: null,
   };
 }
 
@@ -262,49 +271,18 @@ function ensureHlsRoot() {
   fs.mkdirSync(config.hlsOutputDir, { recursive: true });
 }
 
-/** @param {import('fluent-ffmpeg').FfmpegCommand} cmd @param {{ copy?: boolean }} [options] */
-function applyAudioOutput(cmd, { copy = false } = {}) {
-  cmd.outputOptions(["-map", "0:v:0", "-map", "0:a:0?"]);
-  if (copy) {
-    return cmd.audioCodec("copy");
-  }
-  return cmd
-    .audioCodec("aac")
-    .addOutputOption("-ar", "44100")
-    .addOutputOption("-ac", "1")
-    .addOutputOption("-b:a", "64k");
-}
-
 function buildFfmpeg(
   source,
   cameraId,
   qualityId,
-  { mode, transcode, quality },
+  { mode, transcode, quality, probe, encoder },
 ) {
   const inputOptions =
     INPUT_PROFILES[quality.inputProfile] ?? INPUT_PROFILES.lowLatency;
   const cmd = ffmpeg(source).inputOptions(inputOptions);
 
-  if (transcode) {
-    const tc = quality.transcode;
-    if (tc.scale) {
-      cmd.videoFilters(tc.scale);
-    }
-    cmd
-      .videoCodec("libx264")
-      .addOutputOption("-preset", tc.preset)
-      .addOutputOption("-tune", "zerolatency")
-      .addOutputOption("-profile:v", "baseline")
-      .addOutputOption("-pix_fmt", "yuv420p")
-      .addOutputOption("-r", String(tc.fps))
-      .addOutputOption("-g", String(tc.fps * 2))
-      .addOutputOption("-maxrate", tc.maxrate)
-      .addOutputOption("-bufsize", tc.bufsize);
-  } else {
-    cmd.videoCodec("copy");
-  }
-
-  applyAudioOutput(cmd, { copy: !transcode });
+  applyVideoOutput(cmd, { transcode, quality, encoder });
+  applyAudioOutput(cmd, { probe });
 
   if (mode === "hls") {
     const playlist = hlsPlaylist(cameraId, qualityId);
@@ -327,30 +305,25 @@ function buildFfmpeg(
   return cmd;
 }
 
-/** @param {string} source @param {string} localRtspUrl @param {ReturnType<typeof getStreamQualityPreset>} quality */
-function buildLocalPublishFfmpeg(source, localRtspUrl, quality) {
+/**
+ * @param {string} source
+ * @param {string} localRtspUrl
+ * @param {ReturnType<typeof getStreamQualityPreset>} quality
+ * @param {{ transcode: boolean; probe?: import('../utils/rtsp-probe.js').RtspStreamProbe | null; encoder?: string }} options
+ */
+function buildLocalPublishFfmpeg(source, localRtspUrl, quality, options) {
+  const { transcode, probe = null, encoder } = options;
   const inputOptions =
     INPUT_PROFILES[quality.inputProfile] ?? INPUT_PROFILES.lowLatency;
   const cmd = ffmpeg(source).inputOptions(inputOptions);
-  const tc = quality.transcode;
 
-  if (tc.scale) {
-    cmd.videoFilters(tc.scale);
+  applyVideoOutput(cmd, { transcode, quality, encoder });
+  applyAudioOutput(cmd, { probe });
+  const outputOpts = ["-f", "rtsp", "-rtsp_transport", "tcp"];
+  if (!transcode && probe?.video?.codec === "h264") {
+    outputOpts.push("-bsf:v", "h264_mp4toannexb");
   }
-  cmd
-    .videoCodec("libx264")
-    .addOutputOption("-preset", tc.preset)
-    .addOutputOption("-tune", "zerolatency")
-    .addOutputOption("-profile:v", "baseline")
-    .addOutputOption("-pix_fmt", "yuv420p")
-    .addOutputOption("-r", String(tc.fps))
-    .addOutputOption("-g", String(tc.fps * 2))
-    .addOutputOption("-maxrate", tc.maxrate)
-    .addOutputOption("-bufsize", tc.bufsize);
-  applyAudioOutput(cmd);
-  cmd
-    .output(localRtspUrl)
-    .outputOptions(["-f", "rtsp", "-rtsp_transport", "tcp"]);
+  cmd.output(localRtspUrl).outputOptions(outputOpts);
 
   return cmd;
 }
@@ -442,15 +415,24 @@ async function syncPrimaryIngest(state, mtxPath, cameraRtsp, quality) {
   await stopFfmpegField(state, "ffmpegProcess");
   await ensurePathPublisher("local", mtxPath);
   const localUrl = getLocalRtspUrl(mtxPath);
-  await launchFfmpeg(
+  const probe = await ensureStreamProbe(state, cameraRtsp);
+
+  await startIngestWithPolicy(
     state,
-    buildLocalPublishFfmpeg(cameraRtsp, localUrl, quality),
+    quality,
+    probe,
+    (transcode, encoder) =>
+      buildLocalPublishFfmpeg(cameraRtsp, localUrl, quality, {
+        transcode,
+        probe,
+        encoder,
+      }),
     "ffmpegProcess",
   );
+
   await waitPathOnline("local", mtxPath, 20_000);
   state.primaryActive = true;
   state.localMtxActive = true;
-  state.transcodeMode = true;
 }
 
 /**
@@ -528,6 +510,110 @@ function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess") {
   });
 }
 
+/**
+ * @param {QualityStreamState} state
+ * @param {string} cameraRtsp
+ */
+async function ensureStreamProbe(state, cameraRtsp) {
+  if (state.streamProbe && state.currentRtspUrl === cameraRtsp) {
+    return state.streamProbe;
+  }
+  state.streamProbe = await probeRtspStream(cameraRtsp);
+  return state.streamProbe;
+}
+
+/**
+ * @param {QualityStreamState} state
+ * @param {import('fluent-ffmpeg').FfmpegCommand} cmd
+ * @param {string} encoder
+ * @param {'ffmpegProcess' | 'ffmpegRelayProcess'} field
+ */
+async function launchFfmpegWithEncoderFallback(state, cmd, encoder, field) {
+  try {
+    await launchFfmpeg(state, cmd, field);
+    return encoder;
+  } catch (err) {
+    const fallback = getFallbackEncoder(encoder);
+    if (!fallback) throw err;
+    console.warn(
+      `[stream] ${encoder} thất bại — retry với ${fallback}:`,
+      err instanceof Error ? err.message : err,
+    );
+    await stopFfmpegField(state, field);
+    throw Object.assign(new Error("ENCODER_FALLBACK"), {
+      cause: err,
+      fallbackEncoder: fallback,
+    });
+  }
+}
+
+/**
+ * @param {QualityStreamState} state
+ * @param {ReturnType<typeof getStreamQualityPreset>} quality
+ * @param {import('../utils/rtsp-probe.js').RtspStreamProbe} probe
+ * @param {(transcode: boolean, encoder: string) => import('fluent-ffmpeg').FfmpegCommand} buildCmd
+ * @param {'ffmpegProcess' | 'ffmpegRelayProcess'} field
+ */
+async function startIngestWithPolicy(
+  state,
+  quality,
+  probe,
+  buildCmd,
+  field = "ffmpegProcess",
+) {
+  const encoder = resolveActiveVideoEncoder();
+  const canTryCopy =
+    quality.transcodePolicy === "copyFirst" && probe.videoCopyable;
+
+  const startTranscode = async (activeEncoder) => {
+    await launchFfmpegWithEncoderFallback(
+      state,
+      buildCmd(true, activeEncoder),
+      activeEncoder,
+      field,
+    );
+    state.transcodeMode = true;
+    return activeEncoder;
+  };
+
+  if (quality.transcodePolicy === "transcode" || !canTryCopy) {
+    try {
+      await startTranscode(encoder);
+    } catch (err) {
+      if (err instanceof Error && err.message === "ENCODER_FALLBACK") {
+        const fallback = /** @type {{ fallbackEncoder: string }} */ (err)
+          .fallbackEncoder;
+        await startTranscode(fallback);
+        return;
+      }
+      throw err;
+    }
+    return;
+  }
+
+  try {
+    await launchFfmpeg(state, buildCmd(false, encoder), field);
+    state.transcodeMode = false;
+  } catch (copyErr) {
+    await stopFfmpegField(state, field);
+    console.warn(
+      "[stream] Copy stream thất bại — fallback transcode:",
+      copyErr instanceof Error ? copyErr.message : copyErr,
+    );
+    try {
+      await startTranscode(encoder);
+    } catch (err) {
+      if (err instanceof Error && err.message === "ENCODER_FALLBACK") {
+        const fallback = /** @type {{ fallbackEncoder: string }} */ (err)
+          .fallbackEncoder;
+        await startTranscode(fallback);
+        return;
+      }
+      throw err;
+    }
+  }
+}
+
 /** @param {QualityStreamState} state @param {'ffmpegRelayProcess' | 'ffmpegProcess'} field */
 async function stopFfmpegField(state, field) {
   if (!state[field]) return;
@@ -569,32 +655,22 @@ async function startHlsStream(state, cameraId, qualityId, source, quality) {
   await rm(hlsDir(cameraId, qualityId), { recursive: true, force: true });
   await mkdir(hlsDir(cameraId, qualityId), { recursive: true });
 
-  const startWith = async (transcode) =>
-    launchFfmpeg(
-      state,
+  const probe = await ensureStreamProbe(state, source);
+
+  await startIngestWithPolicy(
+    state,
+    quality,
+    probe,
+    (transcode, encoder) =>
       buildFfmpeg(source, cameraId, qualityId, {
         mode: "hls",
         transcode,
         quality,
+        probe,
+        encoder,
       }),
-      "ffmpegProcess",
-    );
-
-  if (quality.transcodePolicy === "transcode") {
-    await startWith(true);
-    state.transcodeMode = true;
-    await waitForPlaylist(cameraId, qualityId);
-    return;
-  }
-
-  try {
-    await startWith(false);
-    state.transcodeMode = false;
-  } catch {
-    state.ffmpegProcess = null;
-    await startWith(true);
-    state.transcodeMode = true;
-  }
+    "ffmpegProcess",
+  );
 
   await waitForPlaylist(cameraId, qualityId);
 }
@@ -658,7 +734,7 @@ export function getStreamStatus(
       transcode: state.transcodeMode,
       stream_type: "webrtc",
       stream_url: getWebRtcPageUrl(mtxPath, mtxTarget, clientContext),
-      whep_url: streaming ? whepUrl : null,
+      whep_url: whepUrl,
       mediamtx_path: mtxPath,
       local_mtx_active: state.localMtxActive,
       central_relay_active: state.centralRelayActive,
@@ -843,6 +919,7 @@ export async function stopQualityStream(cameraId, qualityId, options = {}) {
   if (!hasRegisteredViewers(state)) {
     if (!isStreaming(state)) {
       state.currentRtspUrl = null;
+      state.streamProbe = null;
       state.mtxPathName = null;
       byQuality.delete(resolvedQuality);
       if (byQuality.size === 0) streams.delete(cameraId);
@@ -1125,6 +1202,7 @@ export async function cleanupOrphanQualityStream(cameraId, qualityId) {
   await stopFfmpegIngest(state, mtxPath);
 
   state.currentRtspUrl = null;
+  state.streamProbe = null;
   state.mtxPathName = null;
   byQuality.delete(resolvedQuality);
   if (byQuality.size === 0) streams.delete(cameraId);

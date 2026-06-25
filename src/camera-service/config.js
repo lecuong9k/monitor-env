@@ -81,6 +81,10 @@ export const config = {
   apiKey: process.env.CAMERA_SERVICE_API_KEY?.trim() || "",
   hlsOutputDir: resolvePath(process.env.HLS_OUTPUT_DIR, "./streams"),
   ffmpegPath: process.env.FFMPEG_PATH?.trim() || null,
+  /** Dev: libx264 (.env.development) | Prod Pi: h264_v4l2m2m (.env.production) */
+  ffmpegVideoEncoder: process.env.FFMPEG_VIDEO_ENCODER?.trim() || null,
+  ffmpegVideoEncoderFallback:
+    process.env.FFMPEG_VIDEO_ENCODER_FALLBACK?.trim() || "libx264",
   streamMode:
     process.env.STREAM_MODE === "hls"
       ? "hls"
