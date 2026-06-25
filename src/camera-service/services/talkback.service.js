@@ -138,7 +138,21 @@ export async function createTalkbackSession(cameraId, qualityId = "main") {
 
   const rtspUrl = await resolveTalkbackRtspUrl(cameraId, qualityId);
   const client = new RtspBackchannelClient(rtspUrl);
-  await client.connect();
+
+  try {
+    console.log(
+      `[talkback] camera=${cameraId} quality=${qualityId} — mở RTSP back channel`,
+    );
+    await client.connect();
+    console.log(`[talkback] camera=${cameraId} — RTSP back channel sẵn sàng`);
+  } catch (err) {
+    console.warn(
+      `[talkback] camera=${cameraId} — RTSP thất bại:`,
+      err instanceof Error ? err.message : err,
+    );
+    await client.teardown();
+    throw err;
+  }
 
   const sessionId = randomUUID();
   sessions.set(sessionId, {
@@ -210,6 +224,52 @@ export function stopAllTalkbackSessions() {
 export { probeTalkbackCapabilities as getTalkbackCapabilities };
 
 /**
+ * @param {unknown} raw
+ * @param {boolean} [isBinary]
+ * @returns {{ kind: "json"; text: string } | { kind: "binary"; buffer: Buffer } | null}
+ */
+function toBuffer(raw) {
+  if (Buffer.isBuffer(raw)) return raw;
+  if (raw instanceof ArrayBuffer) return Buffer.from(raw);
+  if (ArrayBuffer.isView(raw)) {
+    return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
+  }
+  return null;
+}
+
+function parseWsPayload(raw, isBinary) {
+  if (isBinary === true) {
+    const buffer = toBuffer(raw);
+    return buffer ? { kind: "binary", buffer } : null;
+  }
+
+  if (typeof raw === "string") {
+    return { kind: "json", text: raw };
+  }
+
+  const buffer = toBuffer(raw);
+  if (!buffer) return null;
+
+  // Text frame trong Node ws thường là Buffer khi isBinary=false
+  if (isBinary === false) {
+    return { kind: "json", text: buffer.toString("utf8") };
+  }
+
+  // Fallback khi thiếu cờ isBinary: chỉ coi là JSON nếu parse được object có type
+  const text = buffer.toString("utf8");
+  try {
+    const probe = JSON.parse(text);
+    if (probe && typeof probe === "object" && "type" in probe) {
+      return { kind: "json", text };
+    }
+  } catch {
+    // not JSON
+  }
+
+  return { kind: "binary", buffer };
+}
+
+/**
  * @param {number} cameraId
  * @param {import("@fastify/websocket").WebSocket} socket
  * @param {{ qualityId?: string }} [options]
@@ -232,17 +292,24 @@ export function handleTalkbackWebSocket(cameraId, socket, options = {}) {
     }
   };
 
-  socket.on("message", async (raw) => {
-    if (Buffer.isBuffer(raw) || raw instanceof ArrayBuffer) {
-      const buffer = Buffer.isBuffer(raw) ? raw : Buffer.from(raw);
+  sendJson({ type: "hello" });
+
+  socket.on("message", async (raw, isBinary) => {
+    const parsed = parseWsPayload(raw, isBinary);
+    if (!parsed) {
+      sendJson({ type: "error", message: "Tin nhắn không hợp lệ" });
+      return;
+    }
+
+    if (parsed.kind === "binary") {
       if (!sessionId) return;
-      sendTalkbackPcm(sessionId, buffer);
+      sendTalkbackPcm(sessionId, parsed.buffer);
       return;
     }
 
     let message;
     try {
-      message = JSON.parse(String(raw));
+      message = JSON.parse(parsed.text);
     } catch {
       sendJson({ type: "error", message: "Tin nhắn JSON không hợp lệ" });
       return;
@@ -261,16 +328,21 @@ export function handleTalkbackWebSocket(cameraId, socket, options = {}) {
         sendJson({ type: "ready", sessionId });
         return;
       }
+      console.log(
+        `[talkback] WS start camera=${cameraId} quality=${qualityId}`,
+      );
       try {
         const created = await createTalkbackSession(cameraId, qualityId);
         sessionId = created.sessionId;
         sendJson({ type: "ready", sessionId });
       } catch (err) {
         const status = typeof err?.status === "number" ? err.status : 500;
+        const message =
+          err instanceof Error ? err.message : "Không mở được talkback";
+        console.warn(`[talkback] WS start failed camera=${cameraId}:`, message);
         sendJson({
           type: "error",
-          message:
-            err instanceof Error ? err.message : "Không mở được talkback",
+          message,
           status,
         });
         if (status === 409) {

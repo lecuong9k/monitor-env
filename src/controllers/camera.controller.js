@@ -1,4 +1,5 @@
 import * as cameraClient from "../services/camera-client.service.js";
+import WebSocket from "ws";
 
 function parseQualityId(request) {
   const fromQuery = request.query?.quality;
@@ -159,12 +160,9 @@ export async function talkbackWebSocketController(socket, request) {
   );
   const apiKey = cameraClient.getCameraServiceApiKey();
 
-  const { default: WebSocket } = await import("ws");
-  const upstream = new WebSocket(upstreamUrl, {
-    headers: {
-      "X-Camera-Service-Key": apiKey,
-    },
-  });
+  /** @type {{ data: Buffer | ArrayBuffer | string; isBinary: boolean }[]} */
+  const pendingClientMessages = [];
+  let upstream = /** @type {WebSocket | null} */ (null);
 
   let closed = false;
   const closeBoth = (code, reason) => {
@@ -176,14 +174,51 @@ export async function talkbackWebSocketController(socket, request) {
       // ignore
     }
     try {
-      upstream.close(code, reason);
+      upstream?.close(code, reason);
     } catch {
       // ignore
     }
   };
 
+  const flushPendingToUpstream = () => {
+    if (!upstream || upstream.readyState !== WebSocket.OPEN) return;
+    while (pendingClientMessages.length > 0) {
+      const item = pendingClientMessages.shift();
+      if (!item) break;
+      upstream.send(item.data, { binary: item.isBinary });
+    }
+  };
+
+  socket.on("message", (data, isBinary) => {
+    if (upstream?.readyState === WebSocket.OPEN) {
+      upstream.send(data, { binary: isBinary });
+      return;
+    }
+
+    pendingClientMessages.push({ data, isBinary });
+    if (upstream?.readyState === WebSocket.CLOSED) {
+      pendingClientMessages.length = 0;
+      closeBoth(1011, "upstream closed");
+    }
+  });
+
+  socket.on("close", (code, reason) => {
+    closeBoth(code, reason.toString());
+  });
+
+  socket.on("error", (err) => {
+    request.log.error(err);
+    closeBoth(1011, "client error");
+  });
+
+  upstream = new WebSocket(upstreamUrl, {
+    headers: {
+      "X-Camera-Service-Key": apiKey,
+    },
+  });
+
   upstream.on("open", () => {
-    // upstream ready
+    flushPendingToUpstream();
   });
 
   upstream.on("message", (data, isBinary) => {
@@ -199,21 +234,6 @@ export async function talkbackWebSocketController(socket, request) {
   upstream.on("error", (err) => {
     request.log.error(err);
     closeBoth(1011, "upstream error");
-  });
-
-  socket.on("message", (data, isBinary) => {
-    if (upstream.readyState === WebSocket.OPEN) {
-      upstream.send(data, { binary: isBinary });
-    }
-  });
-
-  socket.on("close", (code, reason) => {
-    closeBoth(code, reason.toString());
-  });
-
-  socket.on("error", (err) => {
-    request.log.error(err);
-    closeBoth(1011, "client error");
   });
 }
 

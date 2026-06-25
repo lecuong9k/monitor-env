@@ -8,6 +8,10 @@ const BACKCHANNEL_REQUIRE = "www.onvif.org/ver20/backchannel";
 const SAMPLES_PER_PACKET = 160;
 const PCM_FRAME_BYTES = SAMPLES_PER_PACKET * 2;
 const USER_AGENT = "monitor-env-talkback/1.0";
+const RTSP_REQUEST_TIMEOUT_MS =
+  Number(process.env.TALKBACK_RTSP_TIMEOUT_MS) || 8000;
+const RTSP_CONNECT_TIMEOUT_MS =
+  Number(process.env.TALKBACK_RTSP_CONNECT_TIMEOUT_MS) || 5000;
 
 /** @typedef {{ hostname: string; port: number; username: string; password: string; path: string; baseUrl: string }} RtspParts */
 
@@ -117,6 +121,45 @@ export function parseBackchannelFromSdp(sdp) {
   return null;
 }
 
+/**
+ * @param {string} sdp
+ * @returns {{ kind: string; control: string; recvonly: boolean; sendonly: boolean }[]}
+ */
+function parseSdpTracks(sdp) {
+  const normalized = sdp.replace(/\r\n/g, "\n");
+  const blocks = normalized.split("\nm=").slice(1);
+  /** @type {{ kind: string; control: string; recvonly: boolean; sendonly: boolean }[]} */
+  const tracks = [];
+
+  for (const block of blocks) {
+    const section = `m=${block}`;
+    const lines = section.split("\n");
+    const mLine = lines[0] || "";
+    const kind = mLine.startsWith("m=video")
+      ? "video"
+      : mLine.startsWith("m=audio")
+        ? "audio"
+        : "other";
+    if (kind === "other") continue;
+
+    let control = "";
+    let recvonly = false;
+    let sendonly = false;
+    for (const line of lines.slice(1)) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("a=control:")) {
+        control = trimmed.slice("a=control:".length);
+      }
+      if (trimmed === "a=recvonly") recvonly = true;
+      if (trimmed === "a=sendonly") sendonly = true;
+    }
+
+    tracks.push({ kind, control, recvonly, sendonly });
+  }
+
+  return tracks;
+}
+
 function md5(value) {
   return crypto.createHash("md5").update(value).digest("hex");
 }
@@ -159,6 +202,19 @@ function basicAuth(parts) {
   return `Basic ${token}`;
 }
 
+/** @param {Buffer} pcm16le @param {number} [byteLength] */
+function pcm16leToSamples(pcm16le, byteLength = PCM_FRAME_BYTES) {
+  const sampleCount = byteLength / 2;
+  const samples = new Int16Array(sampleCount);
+  for (let i = 0; i < sampleCount; i += 1) {
+    samples[i] = pcm16le.readInt16LE(i * 2);
+  }
+  return samples;
+}
+
+const RTP_PACKET_INTERVAL_MS = 20;
+const MAX_PCM_QUEUE_FRAMES = 30;
+
 export class RtspBackchannelClient {
   /** @param {string} rtspUrl */
   constructor(rtspUrl) {
@@ -182,6 +238,66 @@ export class RtspBackchannelClient {
     this.pendingReject = null;
     this.closed = false;
     this.playing = false;
+    /** @type {Buffer[]} */
+    this.pcmQueue = [];
+    /** @type {NodeJS.Timeout | null} */
+    this.pacerTimer = null;
+  }
+
+  #stopPacer() {
+    if (this.pacerTimer) {
+      clearInterval(this.pacerTimer);
+      this.pacerTimer = null;
+    }
+    this.pcmQueue = [];
+  }
+
+  #startPacer() {
+    if (this.pacerTimer) return;
+    this.pacerTimer = setInterval(() => {
+      if (
+        !this.playing ||
+        !this.backchannel ||
+        !this.socket ||
+        this.closed ||
+        this.pcmQueue.length === 0
+      ) {
+        return;
+      }
+      const frame = this.pcmQueue.shift();
+      if (frame) this.#sendRtpFrame(frame);
+    }, RTP_PACKET_INTERVAL_MS);
+  }
+
+  /** @param {Buffer} pcmFrame */
+  #sendRtpFrame(pcmFrame) {
+    const samples = pcm16leToSamples(pcmFrame);
+    let encoded;
+    if (
+      this.backchannel.codec === "PCMA" ||
+      this.backchannel.payloadType === 8
+    ) {
+      encoded = Buffer.from(alawFromPCM(samples));
+    } else {
+      encoded = Buffer.from(ulawFromPCM(samples));
+    }
+
+    const rtp = Buffer.alloc(12 + encoded.length);
+    rtp[0] = 0x80;
+    rtp[1] = this.backchannel.payloadType & 0x7f;
+    rtp.writeUInt16BE(this.sequence & 0xffff, 2);
+    this.sequence = (this.sequence + 1) & 0xffff;
+    rtp.writeUInt32BE(this.timestamp >>> 0, 4);
+    this.timestamp = (this.timestamp + SAMPLES_PER_PACKET) >>> 0;
+    rtp.writeUInt32BE(this.ssrc >>> 0, 8);
+    encoded.copy(rtp, 12);
+
+    const frame = Buffer.alloc(4 + rtp.length);
+    frame[0] = 0x24;
+    frame[1] = this.interleavedChannel;
+    frame.writeUInt16BE(rtp.length, 2);
+    rtp.copy(frame, 4);
+    this.socket.write(frame);
   }
 
   /** @param {Buffer} chunk */
@@ -267,6 +383,13 @@ export class RtspBackchannelClient {
     return lines.join("\r\n");
   }
 
+  #rejectPending(err) {
+    const reject = this.pendingReject;
+    this.pendingResponse = null;
+    this.pendingReject = null;
+    if (reject) reject(err);
+  }
+
   /** @param {string} method @param {string} uri @param {Record<string, string>} [extraHeaders] @param {string} [body] */
   async #request(method, uri, extraHeaders = {}, body = "") {
     if (!this.socket || this.closed) {
@@ -287,10 +410,30 @@ export class RtspBackchannelClient {
         authHeader,
       );
       const response = await new Promise((resolve, reject) => {
-        this.pendingResponse = resolve;
-        this.pendingReject = reject;
+        const timer = setTimeout(() => {
+          this.pendingResponse = null;
+          this.pendingReject = null;
+          reject(
+            new Error(
+              `RTSP ${method} timeout sau ${RTSP_REQUEST_TIMEOUT_MS}ms`,
+            ),
+          );
+        }, RTSP_REQUEST_TIMEOUT_MS);
+
+        const finish = (fn, value) => {
+          clearTimeout(timer);
+          fn(value);
+        };
+
+        this.pendingResponse = (value) => finish(resolve, value);
+        this.pendingReject = (err) => finish(reject, err);
         this.socket.write(payload, (err) => {
-          if (err) reject(err);
+          if (err) {
+            clearTimeout(timer);
+            this.pendingResponse = null;
+            this.pendingReject = null;
+            reject(err);
+          }
         });
       });
 
@@ -306,6 +449,30 @@ export class RtspBackchannelClient {
     }
 
     throw new Error("RTSP auth thất bại");
+  }
+
+  /** @param {string} setupUrl @param {number} channel @param {Record<string, string>} [extra] */
+  async #setupTrack(setupUrl, channel, extra = {}) {
+    const headers = {
+      Transport: `RTP/AVP/TCP;unicast;interleaved=${channel}-${channel + 1}`,
+      Require: BACKCHANNEL_REQUIRE,
+      ...extra,
+    };
+    if (this.session) {
+      headers.Session = this.session;
+    }
+
+    const setup = await this.#request("SETUP", setupUrl, headers);
+    if (setup.status < 200 || setup.status >= 300) {
+      throw new Error(`RTSP SETUP thất bại (${setup.status}) cho ${setupUrl}`);
+    }
+
+    const session = setup.headers.session?.split(";")[0]?.trim() || null;
+    if (session) {
+      this.session = session;
+    } else if (!this.session) {
+      throw new Error("RTSP SETUP không trả Session");
+    }
   }
 
   async connect() {
@@ -328,25 +495,27 @@ export class RtspBackchannelClient {
       throw new Error("SDP không có audio back channel (sendonly)");
     }
 
+    const tracks = parseSdpTracks(describe.body);
+    const forwardTracks = tracks.filter((t) => t.recvonly && !t.sendonly);
+    let interleavedChannel = 0;
+
+    for (const track of forwardTracks) {
+      const setupUrl = resolveControlUrl(
+        track.control,
+        this.parts.baseUrl,
+        this.parts.path,
+      );
+      await this.#setupTrack(setupUrl, interleavedChannel);
+      interleavedChannel += 2;
+    }
+
     const setupUrl = resolveControlUrl(
       this.backchannel.control,
       this.parts.baseUrl,
       this.parts.path,
     );
-
-    const setup = await this.#request("SETUP", setupUrl, {
-      Transport: `RTP/AVP/TCP;unicast;interleaved=${this.interleavedChannel}-${this.interleavedChannel + 1}`,
-      Require: BACKCHANNEL_REQUIRE,
-    });
-
-    if (setup.status < 200 || setup.status >= 300) {
-      throw new Error(`RTSP SETUP thất bại (${setup.status})`);
-    }
-
-    this.session = setup.headers.session?.split(";")[0]?.trim() || null;
-    if (!this.session) {
-      throw new Error("RTSP SETUP không trả Session");
-    }
+    await this.#setupTrack(setupUrl, interleavedChannel);
+    this.interleavedChannel = interleavedChannel;
 
     const play = await this.#request("PLAY", this.parts.baseUrl, {
       Session: this.session,
@@ -358,6 +527,7 @@ export class RtspBackchannelClient {
     }
 
     this.playing = true;
+    this.#startPacer();
   }
 
   /** @param {Buffer} pcm16le */
@@ -366,38 +536,24 @@ export class RtspBackchannelClient {
       return;
     if (pcm16le.length < PCM_FRAME_BYTES) return;
 
-    const samples = pcm16le.subarray(0, PCM_FRAME_BYTES);
-    let encoded;
-    if (
-      this.backchannel.codec === "PCMA" ||
-      this.backchannel.payloadType === 8
+    for (
+      let offset = 0;
+      offset + PCM_FRAME_BYTES <= pcm16le.length;
+      offset += PCM_FRAME_BYTES
     ) {
-      encoded = Buffer.from(alawFromPCM(samples));
-    } else {
-      encoded = Buffer.from(ulawFromPCM(samples));
+      this.pcmQueue.push(
+        Buffer.from(pcm16le.subarray(offset, offset + PCM_FRAME_BYTES)),
+      );
+      while (this.pcmQueue.length > MAX_PCM_QUEUE_FRAMES) {
+        this.pcmQueue.shift();
+      }
     }
-
-    const rtp = Buffer.alloc(12 + encoded.length);
-    rtp[0] = 0x80;
-    rtp[1] = this.backchannel.payloadType & 0x7f;
-    rtp.writeUInt16BE(this.sequence & 0xffff, 2);
-    this.sequence = (this.sequence + 1) & 0xffff;
-    rtp.writeUInt32BE(this.timestamp >>> 0, 4);
-    this.timestamp = (this.timestamp + SAMPLES_PER_PACKET) >>> 0;
-    rtp.writeUInt32BE(this.ssrc >>> 0, 8);
-    encoded.copy(rtp, 12);
-
-    const frame = Buffer.alloc(4 + rtp.length);
-    frame[0] = 0x24;
-    frame[1] = this.interleavedChannel;
-    frame.writeUInt16BE(rtp.length, 2);
-    rtp.copy(frame, 4);
-    this.socket.write(frame);
   }
 
   async teardown() {
     if (!this.socket || this.closed) return;
 
+    this.#stopPacer();
     try {
       if (this.session) {
         await this.#request("TEARDOWN", this.parts.baseUrl, {
@@ -421,21 +577,35 @@ export class RtspBackchannelClient {
         { host: this.parts.hostname, port: this.parts.port },
         resolve,
       );
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(
+          new Error(
+            `RTSP connect timeout sau ${RTSP_CONNECT_TIMEOUT_MS}ms tới ${this.parts.hostname}:${this.parts.port}`,
+          ),
+        );
+      }, RTSP_CONNECT_TIMEOUT_MS);
+
       socket.setNoDelay(true);
       socket.on("data", (chunk) => this.#appendBuffer(chunk));
       socket.on("error", (err) => {
         if (this.pendingReject) {
-          this.pendingReject(err);
-          this.pendingReject = null;
-          this.pendingResponse = null;
+          this.#rejectPending(err);
         }
       });
       socket.on("close", () => {
         this.closed = true;
         this.playing = false;
+        this.#rejectPending(new Error("RTSP socket đã đóng"));
       });
       this.socket = socket;
-      socket.once("error", reject);
+      socket.once("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      socket.once("connect", () => {
+        clearTimeout(timer);
+      });
     });
   }
 
