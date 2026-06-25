@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { config } from "../config.js";
-import { resolveFfmpegPath } from "../../utils/ffmpeg-path.js";
+import { resolveFfprobePath } from "../../utils/ffmpeg-path.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -24,9 +24,7 @@ function getFfprobeBinary() {
   if (config.ffmpegPath) {
     process.env.FFMPEG_PATH = config.ffmpegPath;
   }
-  const ffmpeg = resolveFfmpegPath();
-  if (!ffmpeg) return null;
-  return ffmpeg.replace(/ffmpeg([^/\\]*)$/, "ffprobe$1");
+  return resolveFfprobePath();
 }
 
 /**

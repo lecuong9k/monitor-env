@@ -25,6 +25,7 @@ import {
   checkMediamtxAvailable,
   clearPathSource,
   ensurePathPublisher,
+  ensurePathSource,
   getCentralRtspPublishUrl,
   getLocalRtspUrl,
   getWebRtcPageUrl,
@@ -41,6 +42,10 @@ import {
   getFallbackEncoder,
 } from "../utils/ffmpeg-output.js";
 import { probeRtspStream } from "../utils/rtsp-probe.js";
+
+function usesMtxDirectIngest() {
+  return config.streamLocalIngestMode === "mediamtx";
+}
 
 /**
  * @typedef {import('../../config/stream-quality.js').StreamQualityId} StreamQualityId
@@ -381,16 +386,17 @@ async function stopFfmpegIngest(state, mtxPath) {
 }
 
 /**
- * Hub: transcode camera → local MTX khi có bất kỳ viewer nào.
+ * Local ingest:
+ * - mediamtx: Camera RTSP → MediaMTX local (WHEP cho MiniPC UI)
+ * - ffmpeg: Camera RTSP → ffmpeg → MediaMTX local (legacy)
+ * Remote: syncCentralRelay — ffmpeg copy từ MTX local → MTX central (Dashboard).
  * @param {QualityStreamState} state
  * @param {string} mtxPath
  * @param {string} cameraRtsp
  * @param {ReturnType<typeof getStreamQualityPreset>} quality
  */
 async function syncPrimaryIngest(state, mtxPath, cameraRtsp, quality) {
-  if (!ffmpegPath) {
-    throw new Error(`Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`);
-  }
+  const mtxDirect = usesMtxDirectIngest();
 
   if (!primaryDesired(state)) {
     await stopCentralRelay(state, mtxPath);
@@ -408,11 +414,29 @@ async function syncPrimaryIngest(state, mtxPath, cameraRtsp, quality) {
     return;
   }
 
-  if (state.primaryActive && state.ffmpegProcess) {
+  if (state.primaryActive && (state.ffmpegProcess || mtxDirect)) {
     return;
+  }
+  if (state.primaryActive && !state.ffmpegProcess) {
+    state.primaryActive = false;
+    state.localMtxActive = false;
   }
 
   await stopFfmpegField(state, "ffmpegProcess");
+
+  if (mtxDirect) {
+    await ensurePathSource("local", mtxPath, cameraRtsp);
+    await waitPathOnline("local", mtxPath, 20_000);
+    state.primaryActive = true;
+    state.localMtxActive = true;
+    state.transcodeMode = false;
+    return;
+  }
+
+  if (!ffmpegPath) {
+    throw new Error(`Không tìm thấy ffmpeg binary. ${getFfmpegInstallHint()}`);
+  }
+
   await ensurePathPublisher("local", mtxPath);
   const localUrl = getLocalRtspUrl(mtxPath);
   const probe = await ensureStreamProbe(state, cameraRtsp);
@@ -457,8 +481,14 @@ async function syncCentralRelay(state, mtxPath) {
   if (state.relayActive && state.ffmpegRelayProcess) {
     return;
   }
+  if (state.relayActive && !state.ffmpegRelayProcess) {
+    state.relayActive = false;
+    state.centralRelayActive = false;
+  }
 
-  if (!state.primaryActive || !state.ffmpegProcess) {
+  if (!state.primaryActive) {
+    await waitPathOnline("local", mtxPath, 20_000);
+  } else if (!state.ffmpegProcess && !usesMtxDirectIngest()) {
     await waitPathOnline("local", mtxPath, 20_000);
   }
 
@@ -501,10 +531,24 @@ function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess") {
       .on("start", () => resolveStart())
       .on("error", (err) => {
         state[field] = null;
+        if (field === "ffmpegProcess") {
+          state.primaryActive = false;
+          state.localMtxActive = false;
+        } else if (field === "ffmpegRelayProcess") {
+          state.relayActive = false;
+          state.centralRelayActive = false;
+        }
         reject(err);
       })
       .on("end", () => {
         state[field] = null;
+        if (field === "ffmpegProcess") {
+          state.primaryActive = false;
+          state.localMtxActive = false;
+        } else if (field === "ffmpegRelayProcess") {
+          state.relayActive = false;
+          state.centralRelayActive = false;
+        }
       })
       .run();
   });
@@ -514,6 +558,7 @@ function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess") {
  * @param {QualityStreamState} state
  * @param {string} cameraRtsp
  */
+/** @returns {import('../utils/rtsp-probe.js').RtspStreamProbe} */
 async function ensureStreamProbe(state, cameraRtsp) {
   if (state.streamProbe && state.currentRtspUrl === cameraRtsp) {
     return state.streamProbe;
@@ -677,6 +722,9 @@ async function startHlsStream(state, cameraId, qualityId, source, quality) {
 
 /** @param {QualityStreamState} state */
 function isStreaming(state) {
+  if (config.streamMode === "webrtc") {
+    return Boolean(state.primaryActive && state.localMtxActive);
+  }
   return state.ffmpegProcess !== null;
 }
 
