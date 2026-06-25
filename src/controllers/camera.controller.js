@@ -15,7 +15,7 @@ export async function listCamerasController(request, reply) {
     return await cameraClient.listCameras(request);
   } catch (err) {
     request.log.error(err);
-    const status = err.status === 401 ? 503 : 500;
+    const status = err.status === 401 ? 503 : err.status === 503 ? 503 : 500;
     return reply.code(status).send({
       error: err.message || "Camera service không khả dụng",
     });

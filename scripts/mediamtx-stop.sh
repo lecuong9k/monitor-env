@@ -1,5 +1,6 @@
 #!/bin/sh
-# Dừng MediaMTX local và giải phóng port (8889, 9997, 8554, 8189)
+# Dừng MediaMTX local dev (mediamtx.dev.yml) — KHÔNG đụng port Mbox central
+# monitor-env-be: 8890, 9996, 8555, 9995, 18190/udp
 set -e
 cd "$(dirname "$0")/.."
 
@@ -13,10 +14,11 @@ kill_port() {
   fi
 }
 
-kill_port tcp 8889
-kill_port tcp 9997
-kill_port tcp 8554
-kill_port udp 8189
+kill_port tcp 8890
+kill_port tcp 9996
+kill_port tcp 8555
+kill_port tcp 9995
+kill_port udp 18190
 
 if [ -x "./mediamtx" ]; then
   pkill -f "$(pwd)/mediamtx" 2>/dev/null || true

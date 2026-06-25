@@ -20,7 +20,7 @@
     "camera-service": "NODE_ENV=production node --import ./src/load-env.js src/camera-service/app.js",
     "camera-service:dev": "sh scripts/camera-service-stop.sh && sleep 1 && NODE_ENV=development node --import ./src/load-env.js --watch src/camera-service/app.js",
     "camera-service:stop": "sh scripts/camera-service-stop.sh",
-    "mediamtx:dev": "sh scripts/mediamtx-stop.sh && sleep 1 && ./mediamtx mediamtx.local.yml",
+    "mediamtx:dev": "sh scripts/mediamtx-stop.sh && sleep 1 && ./mediamtx mediamtx.dev.yml",
     "mediamtx:prod": "sh scripts/mediamtx-stop.sh && sleep 1 && ./mediamtx mediamtx.local.yml",
     "mediamtx:stop": "sh scripts/mediamtx-stop.sh",
     "mediamtx:install": "sh scripts/install-mediamtx.sh",

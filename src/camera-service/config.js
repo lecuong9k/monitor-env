@@ -70,7 +70,8 @@ function resolveLocalWebrtcUrl() {
   if (explicit) return explicit.replace(/\/$/, "");
 
   const lanIp = process.env.MEDIAMTX_LOCAL_LAN_IP?.trim() || detectLanIp();
-  const port = Number(process.env.MEDIAMTX_LOCAL_WEBRTC_PORT) || 8889;
+  const defaultPort = process.env.NODE_ENV === "development" ? 8890 : 8889;
+  const port = Number(process.env.MEDIAMTX_LOCAL_WEBRTC_PORT) || defaultPort;
   const protocol = process.env.MEDIAMTX_LOCAL_WEBRTC_PROTOCOL?.trim() || "http";
   return `${protocol}://${lanIp}:${port}`;
 }
@@ -81,6 +82,10 @@ export const config = {
   apiKey: process.env.CAMERA_SERVICE_API_KEY?.trim() || "",
   hlsOutputDir: resolvePath(process.env.HLS_OUTPUT_DIR, "./streams"),
   ffmpegPath: process.env.FFMPEG_PATH?.trim() || null,
+  /** Dev: libx264 (.env.development) | Prod Pi: h264_v4l2m2m (.env.production) */
+  ffmpegVideoEncoder: process.env.FFMPEG_VIDEO_ENCODER?.trim() || null,
+  ffmpegVideoEncoderFallback:
+    process.env.FFMPEG_VIDEO_ENCODER_FALLBACK?.trim() || "libx264",
   streamMode:
     process.env.STREAM_MODE === "hls"
       ? "hls"
@@ -92,10 +97,16 @@ export const config = {
   mediamtx: {
     local: {
       apiUrl:
-        process.env.MEDIAMTX_LOCAL_API_URL?.trim() || "http://127.0.0.1:9997",
+        process.env.MEDIAMTX_LOCAL_API_URL?.trim() ||
+        (process.env.NODE_ENV === "development"
+          ? "http://127.0.0.1:9996"
+          : "http://127.0.0.1:9997"),
       webrtcUrl: resolveLocalWebrtcUrl(),
       rtspInternalUrl:
-        process.env.MEDIAMTX_LOCAL_RTSP_URL?.trim() || "rtsp://127.0.0.1:8554",
+        process.env.MEDIAMTX_LOCAL_RTSP_URL?.trim() ||
+        (process.env.NODE_ENV === "development"
+          ? "rtsp://127.0.0.1:8555"
+          : "rtsp://127.0.0.1:8554"),
       webrtcOriginMap: parseOriginMap(
         process.env.MEDIAMTX_LOCAL_WEBRTC_ORIGIN_MAP,
       ),
@@ -130,7 +141,20 @@ export const config = {
   /** Mỗi N chu kỳ poll chạy sweep path MTX không quản lý (0 = tắt). */
   streamMtxSweepEveryPolls:
     Number(process.env.STREAM_MTX_SWEEP_EVERY_POLLS) || 4,
+  /**
+   * Local ingest: mediamtx = Camera RTSP → MTX local (khuyến nghị MiniPC UI).
+   * ffmpeg = Camera RTSP → ffmpeg → MTX local (legacy transcode/copy).
+   */
+  streamLocalIngestMode: resolveStreamLocalIngestMode(),
 };
+
+/** @returns {'mediamtx' | 'ffmpeg'} */
+function resolveStreamLocalIngestMode() {
+  const raw = String(process.env.STREAM_LOCAL_INGEST_MODE || "mediamtx")
+    .trim()
+    .toLowerCase();
+  return raw === "ffmpeg" ? "ffmpeg" : "mediamtx";
+}
 
 /** @typedef {'local' | 'central'} MtxTarget */
 /** @typedef {'local' | 'remote'} StreamScope */

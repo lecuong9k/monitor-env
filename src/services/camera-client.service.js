@@ -79,13 +79,25 @@ async function parseResponse(res) {
 }
 
 export async function cameraServiceFetch(path, options = {}, request) {
-  const res = await fetch(`${BASE_URL.replace(/\/$/, "")}${path}`, {
-    ...options,
-    headers: serviceHeaders({
-      ...clientProxyHeaders(request),
-      ...options.headers,
-    }),
-  });
+  const url = `${BASE_URL.replace(/\/$/, "")}${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      ...options,
+      headers: serviceHeaders({
+        ...clientProxyHeaders(request),
+        ...options.headers,
+      }),
+    });
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    const wrapped = new Error(
+      `Không kết nối được camera-service tại ${BASE_URL} (${detail}). Kiểm tra pm2 logs camera-service hoặc chạy: npm run camera-service`,
+    );
+    wrapped.status = 503;
+    wrapped.cause = err;
+    throw wrapped;
+  }
   return parseResponse(res);
 }
 

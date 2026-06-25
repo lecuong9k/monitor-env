@@ -1,0 +1,80 @@
+# MediaMTX local dev — npm run mediamtx:dev (monitor-env-be)
+# Port tách khỏi Mbox central (mediamtx.development.yml: 9997/8889/8554/18189)
+#
+# | Dịch vụ   | monitor-env-be (local) | Mbox (central) |
+# |-----------|------------------------|----------------|
+# | API       | 9996                   | 9997           |
+# | Metrics   | 9995                   | 9998           |
+# | WHEP HTTP | 8890                   | 8889           |
+# | RTSP      | 8555                   | 8554           |
+# | ICE UDP   | 18190                  | 18189          |
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: :9996
+apiAllowOrigins:
+  - "http://127.0.0.1:3000"
+  - "http://localhost:3000"
+  - "http://127.0.0.1:5173"
+  - "http://localhost:5173"
+
+metrics: yes
+metricsAddress: 127.0.0.1:9995
+
+webrtc: yes
+webrtcAddress: :8890
+webrtcAllowOrigins:
+  - "http://127.0.0.1:3000"
+  - "http://localhost:3000"
+  - "http://127.0.0.1:5173"
+  - "http://localhost:5173"
+webrtcAdditionalHosts:
+  - "127.0.0.1"
+  - "localhost"
+webrtcLocalUDPAddress: :18190
+webrtcICEServers2:
+  - url: stun:stun.l.google.com:19302
+
+rtsp: yes
+rtspAddress: 127.0.0.1:8555
+rtspTransports: [tcp]
+
+rtmp: no
+hls: no
+srt: no
+moq: no
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: read
+        path:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+        path:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: api
+  - user: any
+    pass:
+    ips: ["127.0.0.1", "::1"]
+    permissions:
+      - action: metrics
+
+pathDefaults:
+  rtspTransport: tcp
+  sourceOnDemand: true
+  sourceOnDemandStartTimeout: 10s
+  sourceOnDemandCloseAfter: 10s
+
+paths: {}

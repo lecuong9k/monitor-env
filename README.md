@@ -10,7 +10,8 @@ Camera RTSP → FFmpeg transcode H.264 → MediaMTX local → WHEP → MiniPC UI
                               └─► FFmpeg relay (copy) → MediaMTX central → WHEP → Mbox UI
 ```
 
-- **Primary ingest**: transcode khi có bất kỳ viewer nào (`localViewerCount + remoteViewerCount > 0`) — luôn publish vào **local MTX** (hub)
+- **Primary ingest**: copy H.264 trước khi transcode; transcode qua `FFMPEG_VIDEO_ENCODER` (Pi: `h264_v4l2m2m`, dev: `libx264`) khi cần
+- **Audio**: copy nếu camera đã AAC
 - **Central relay**: copy RTSP local → central khi `remoteViewerCount > 0` — start/stop **độc lập**, không restart transcode
 - **scope=local** / **scope=remote**: chỉ tăng/giảm ref-count; join/leave một scope không làm giật viewer scope kia
 - Không viewer → dừng cả primary và relay
@@ -39,6 +40,9 @@ Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop`
 | `MEDIAMTX_CENTRAL_API_URL`          | `http://<mbox-ip>:9997`                            |
 | `MEDIAMTX_CENTRAL_WEBRTC_URL`       | `http://<mbox-ip>:8889`                            |
 | `MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL` | `rtsp://<mbox-ip>:8554`                            |
+| `STREAM_MODE`                       | `webrtc` (mặc định) hoặc `hls`                     |
+| `FFMPEG_VIDEO_ENCODER`              | Dev: `libx264` · Prod Pi: `h264_v4l2m2m`           |
+| `FFMPEG_VIDEO_ENCODER_FALLBACK`     | `libx264` — khi encoder env không có trên máy      |
 | `STREAM_VIEWER_HEARTBEAT_TTL_MS`    | 45000 — TTL viewer không heartbeat                 |
 | `STREAM_READER_GHOST_MS`            | 30000 — ghost khi không còn MTX reader             |
 | `STREAM_IDLE_POLL_MS`               | 15000 — chu kỳ lifecycle poller                    |
