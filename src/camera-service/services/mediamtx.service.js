@@ -285,6 +285,10 @@ export async function reconcileOrphanMtxPathsOnStartup(
   managedPaths,
   target = "local",
 ) {
+  if (target === "central" && config.centralPathRegisteredByMbox) {
+    return { cleared: 0 };
+  }
+
   const names = await listPathNames(target);
   let cleared = 0;
 
@@ -299,7 +303,11 @@ export async function reconcileOrphanMtxPathsOnStartup(
     );
   }
 
-  if (isCentralRelayEnabled() && target === "local") {
+  if (
+    isCentralRelayEnabled() &&
+    target === "local" &&
+    !config.centralPathRegisteredByMbox
+  ) {
     try {
       const central = await reconcileOrphanMtxPathsOnStartup(
         managedPaths,
@@ -322,6 +330,10 @@ export async function reconcileOrphanMtxPathsOnStartup(
  * @param {MtxTarget} [target]
  */
 export async function sweepUnmanagedMtxPaths(managedPaths, target = "local") {
+  if (target === "central" && config.centralPathRegisteredByMbox) {
+    return { cleared: 0 };
+  }
+
   const names = await listPathNames(target);
   let cleared = 0;
 
@@ -336,7 +348,11 @@ export async function sweepUnmanagedMtxPaths(managedPaths, target = "local") {
     );
   }
 
-  if (isCentralRelayEnabled() && target === "local") {
+  if (
+    isCentralRelayEnabled() &&
+    target === "local" &&
+    !config.centralPathRegisteredByMbox
+  ) {
     try {
       const central = await sweepUnmanagedMtxPaths(managedPaths, "central");
       cleared += central.cleared;

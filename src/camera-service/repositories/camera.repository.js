@@ -28,6 +28,7 @@ export function toPublicCamera(row) {
     id: cam.id,
     name: cam.name,
     ptz_enabled: cam.ptz_enabled,
+    mediamtx_path: cam.mediamtx_path,
   };
 }
 
