@@ -13,6 +13,7 @@ Camera RTSP → FFmpeg transcode H.264 → MediaMTX local → WHEP → MiniPC UI
 - **Primary ingest**: copy H.264 trước khi transcode; transcode qua `FFMPEG_VIDEO_ENCODER` (Pi: `h264_v4l2m2m`, dev: `libx264`) khi cần
 - **Audio**: copy nếu camera đã AAC
 - **Central relay**: copy RTSP local → central khi `remoteViewerCount > 0` — start/stop **độc lập**, không restart transcode
+- **Path central**: khi `CENTRAL_PATH_REGISTERED_BY_MBOX=true`, **Mbox** đăng ký/xóa path trên MediaMTX central; MiniPC chỉ FFmpeg relay tới `MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL`
 - **scope=local** / **scope=remote**: chỉ tăng/giảm ref-count; join/leave một scope không làm giật viewer scope kia
 - Không viewer → dừng cả primary và relay
 

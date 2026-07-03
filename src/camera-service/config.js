@@ -146,6 +146,11 @@ export const config = {
    * ffmpeg = Camera RTSP → ffmpeg → MTX local (legacy transcode/copy).
    */
   streamLocalIngestMode: resolveStreamLocalIngestMode(),
+  /** Mbox đăng ký/xóa path central — MiniPC chỉ FFmpeg relay RTSP. */
+  centralPathRegisteredByMbox:
+    String(process.env.CENTRAL_PATH_REGISTERED_BY_MBOX || "")
+      .trim()
+      .toLowerCase() === "true",
 };
 
 /** @returns {'mediamtx' | 'ffmpeg'} */

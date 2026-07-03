@@ -28,6 +28,7 @@ import {
   ensurePathSource,
   getCentralRtspPublishUrl,
   getLocalRtspUrl,
+  getPathStats,
   getWebRtcPageUrl,
   getWhepUrl,
   isCentralRelayEnabled,
@@ -357,7 +358,7 @@ function relayDesired(state) {
 /** @param {QualityStreamState} state @param {string} mtxPath */
 async function stopCentralRelay(state, mtxPath) {
   await stopFfmpegField(state, "ffmpegRelayProcess");
-  if (state.relayActive) {
+  if (state.relayActive && !config.centralPathRegisteredByMbox) {
     try {
       await clearPathSource("central", mtxPath);
     } catch {
@@ -493,7 +494,14 @@ async function syncCentralRelay(state, mtxPath) {
   }
 
   await stopFfmpegField(state, "ffmpegRelayProcess");
-  await ensurePathPublisher("central", mtxPath);
+  if (!config.centralPathRegisteredByMbox) {
+    await ensurePathPublisher("central", mtxPath);
+  } else {
+    const centralStats = await getPathStats("central", mtxPath);
+    if (!centralStats?.name) {
+      await ensurePathPublisher("central", mtxPath);
+    }
+  }
   const localReadUrl = getLocalRtspUrl(mtxPath);
   const centralUrl = getCentralRtspPublishUrl(mtxPath);
   await launchFfmpeg(
