@@ -215,6 +215,20 @@ export async function heartbeatCameraStream(
   });
 }
 
+export async function heartbeatCameraStreamDirect(
+  cameraId,
+  { qualityId, scope = "local", viewerId } = {},
+) {
+  const body = { scope };
+  if (qualityId) body.qualityId = qualityId;
+  if (viewerId) body.viewerId = String(viewerId);
+
+  return cameraServiceFetch(`/cameras/${cameraId}/stream/heartbeat`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function restartCameraStream(
   cameraId,
   request,
