@@ -22,6 +22,7 @@ Camera RTSP → FFmpeg transcode H.264 → MediaMTX local → WHEP → MiniPC UI
 Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop` / `quality` / `heartbeat`.
 
 - `POST /cameras/:id/stream/heartbeat` — gia hạn session (~30s từ client)
+- `WS /ws/camera-stream-heartbeat` — batch heartbeat qua WebSocket (giảm HTTP polling; fallback HTTP khi WS rớt)
 - Viewer hết heartbeat sau `STREAM_VIEWER_HEARTBEAT_TTL_MS` (mặc định 45s) → lifecycle gỡ ghost count
 - Viewer còn trong Map nhưng MTX `readerCount=0` liên tục sau `STREAM_READER_GHOST_MS` (mặc định 30s) → expire ghost + sync pipeline
 - Startup + periodic sweep: dọn path MTX `-(main|sub|mobile)` không còn trong `streams` Map

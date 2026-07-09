@@ -139,7 +139,7 @@ export async function gotoHomePosition(cameraId) {
   const token = record?.home_preset_token || "255";
 
   if (!(await homePresetReady(cameraId, camera))) {
-    throw new Error("Chưa đặt Home — nhấn «Đặt Home» trước");
+    throw new Error("Chưa đặt vị trí gốc — nhấn «Đặt vị trí gốc» trước");
   }
 
   await stopMove(cameraId);

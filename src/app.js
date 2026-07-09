@@ -8,6 +8,7 @@ import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
 import dataLoggingRoutes from "./routes/data-logging.routes.js";
 import recipeRoutes from "./routes/recipe.routes.js";
 import wsRoutes from "./routes/ws.routes.js";
+import { registerCameraStreamHeartbeatWs } from "./routes/camera-stream-heartbeat.ws.js";
 import cameraRoutes from "./routes/camera.routes.js";
 import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
 import { checkCameraServiceHealth } from "./services/camera-client.service.js";
@@ -52,6 +53,7 @@ fastify.register(modbusRtuRoutes);
 fastify.register(dataLoggingRoutes);
 fastify.register(recipeRoutes);
 await fastify.register(wsRoutes);
+registerCameraStreamHeartbeatWs(fastify);
 await fastify.register(cameraRoutes);
 
 if (process.env.STREAM_MODE === "hls") {
