@@ -17,6 +17,8 @@
   "scripts": {
     "start": "NODE_ENV=production node --import ./src/load-env.js src/app.js",
     "dev": "NODE_ENV=development node --import ./src/load-env.js --watch src/app.js",
+    "dev:all": "sh scripts/dev-all.sh",
+    "dev:stop": "sh scripts/dev-all-stop.sh",
     "camera-service": "NODE_ENV=production node --import ./src/load-env.js src/camera-service/app.js",
     "camera-service:dev": "sh scripts/camera-service-stop.sh && sleep 1 && NODE_ENV=development node --import ./src/load-env.js --watch src/camera-service/app.js",
     "camera-service:stop": "sh scripts/camera-service-stop.sh",

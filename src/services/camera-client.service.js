@@ -109,6 +109,11 @@ export async function listCamerasRegistry() {
   return cameraServiceFetch("/cameras/registry");
 }
 
+/** Full config + password — chỉ dùng nội bộ cho WS Edge AI agent. */
+export async function listCamerasForAiAgent() {
+  return cameraServiceFetch("/cameras/ai-agent-config");
+}
+
 export async function getCamera(cameraId) {
   return cameraServiceFetch(`/cameras/${cameraId}`);
 }

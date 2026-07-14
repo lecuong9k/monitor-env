@@ -29,8 +29,9 @@ function isAgentEnabled() {
 }
 
 function sendJson(payload) {
-  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
   ws.send(JSON.stringify(payload));
+  return true;
 }
 
 async function collectHeartbeatPayload() {
@@ -216,4 +217,69 @@ export function startEdgeAgent() {
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
+}
+
+/** Edge đã register với Mbox và socket còn mở. */
+export function isEdgeRegistered() {
+  return registered && ws != null && ws.readyState === WebSocket.OPEN;
+}
+
+/**
+ * Relay ai_event lên Mbox qua WS edge (không gắn edgeId — Mbox lấy từ session).
+ * @param {Record<string, unknown>} msg
+ * @returns {{ ok: boolean, forwarded: boolean, error?: string }}
+ */
+export function forwardAiEvent(msg) {
+  if (!isAgentEnabled()) {
+    return {
+      ok: false,
+      forwarded: false,
+      error: "Edge agent chưa cấu hình (MBOX_EDGE_WS_URL / EDGE_ID)",
+    };
+  }
+  if (!isEdgeRegistered()) {
+    return { ok: false, forwarded: false, error: "edge offline" };
+  }
+
+  const eventType = String(msg?.eventType ?? "").trim();
+  if (!eventType) {
+    return { ok: false, forwarded: false, error: "Thiếu eventType" };
+  }
+
+  const payload = {
+    type: "ai_event",
+    eventType,
+  };
+
+  const cameraId = String(msg?.cameraId ?? "").trim();
+  if (cameraId) payload.cameraId = cameraId;
+
+  const timestamp = String(msg?.timestamp ?? "").trim();
+  if (timestamp) payload.timestamp = timestamp;
+
+  const timestampMs = Number(msg?.timestamp_ms);
+  if (Number.isFinite(timestampMs) && timestampMs > 0) {
+    payload.timestamp_ms = timestampMs;
+  }
+
+  if (msg?.thumbnail != null && String(msg.thumbnail).trim()) {
+    payload.thumbnail = String(msg.thumbnail);
+  }
+
+  if (Array.isArray(msg?.objects)) {
+    payload.objects = msg.objects;
+  }
+
+  const area = String(msg?.area ?? "").trim();
+  if (area) payload.area = area;
+  const location = String(msg?.location ?? "").trim();
+  if (location) payload.location = location;
+  const address = String(msg?.address ?? "").trim();
+  if (address) payload.address = address;
+
+  const sent = sendJson(payload);
+  if (!sent) {
+    return { ok: false, forwarded: false, error: "edge offline" };
+  }
+  return { ok: true, forwarded: true };
 }

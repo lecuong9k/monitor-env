@@ -85,6 +85,14 @@ export function findCameraWithSecretsById(id) {
   return toCameraWithSecrets(row);
 }
 
+/** Danh sách camera active kèm password (cho Edge AI agent qua MiniPC). */
+export function findAllCamerasWithSecrets({ activeOnly = true } = {}) {
+  const sql = activeOnly
+    ? `SELECT ${SELECT_PUBLIC}, password_enc FROM cameras WHERE status = 1 ORDER BY id ASC`
+    : `SELECT ${SELECT_PUBLIC}, password_enc FROM cameras ORDER BY id ASC`;
+  return db.prepare(sql).all().map(toCameraWithSecrets).filter(Boolean);
+}
+
 export function countCameras() {
   return (
     db.prepare("SELECT COUNT(*) AS n FROM cameras WHERE status = 1").get()?.n ??
