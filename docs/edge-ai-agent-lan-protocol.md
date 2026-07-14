@@ -108,9 +108,18 @@ MiniPC → Agent:
 
 hoặc `{ "ok": false, "forwarded": false, "error": "edge offline" }`.
 
-### Heartbeat (tuỳ chọn)
+### Heartbeat (ping / pong)
 
-`{ "type": "ping" }` → `{ "type": "pong", "at": "..." }`
+Hai chiều sau khi `auth_ok`:
+
+| Hướng          | Message                           | Phản hồi                                     |
+| -------------- | --------------------------------- | -------------------------------------------- |
+| MiniPC → Agent | `{ "type": "ping", "at": "..." }` | Agent phải trả `{ "type": "pong" }`          |
+| Agent → MiniPC | `{ "type": "ping" }`              | MiniPC trả `{ "type": "pong", "at": "..." }` |
+
+MiniPC gửi `ping` định kỳ (`EDGE_AI_AGENT_PING_MS`, mặc định 30s). Không nhận `pong` trong `EDGE_AI_AGENT_PONG_TIMEOUT_MS` (mặc định 10s) → đóng socket.
+
+Agent mẫu / production **bắt buộc** xử lý `ping` từ MiniPC và gửi `pong`.
 
 ## Script mẫu
 

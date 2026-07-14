@@ -8,6 +8,9 @@ import {
 
 const MAX_THUMBNAIL_BYTES =
   Number(process.env.EDGE_AI_EVENT_MAX_THUMBNAIL_BYTES) || 512 * 1024;
+const PING_INTERVAL_MS = Number(process.env.EDGE_AI_AGENT_PING_MS) || 30_000;
+const PONG_TIMEOUT_MS =
+  Number(process.env.EDGE_AI_AGENT_PONG_TIMEOUT_MS) || 10_000;
 
 function sendJson(socket, payload) {
   if (socket.readyState !== 1) return;
@@ -95,7 +98,7 @@ function handleAiEvent(socket, msg) {
 
 /**
  * WS /ws/ai-agent — Edge AI agent LAN:
- * auth → get_cameras / ai_event / ping
+ * auth → get_cameras / ai_event / ping↔pong keepalive
  */
 export function registerAiAgentWs(fastify) {
   fastify.get("/ws/ai-agent", { websocket: true }, (socket, request) => {
@@ -109,12 +112,83 @@ export function registerAiAgentWs(fastify) {
     }
 
     let authenticated = false;
+    let pingTimer = null;
+    let pongDeadlineTimer = null;
+    let awaitingPong = false;
+
+    function clearKeepalive() {
+      if (pingTimer) {
+        clearInterval(pingTimer);
+        pingTimer = null;
+      }
+      if (pongDeadlineTimer) {
+        clearTimeout(pongDeadlineTimer);
+        pongDeadlineTimer = null;
+      }
+      awaitingPong = false;
+    }
+
+    function notePong() {
+      awaitingPong = false;
+      if (pongDeadlineTimer) {
+        clearTimeout(pongDeadlineTimer);
+        pongDeadlineTimer = null;
+      }
+    }
+
+    function startKeepalive() {
+      clearKeepalive();
+      if (PING_INTERVAL_MS <= 0) return;
+
+      pingTimer = setInterval(() => {
+        if (socket.readyState !== 1) {
+          clearKeepalive();
+          return;
+        }
+        if (awaitingPong) return;
+
+        awaitingPong = true;
+        sendJson(socket, {
+          type: "ping",
+          at: new Date().toISOString(),
+        });
+
+        pongDeadlineTimer = setTimeout(() => {
+          if (socket.readyState === 1) {
+            sendJson(socket, {
+              type: "error",
+              message: "pong timeout",
+            });
+            try {
+              socket.close();
+            } catch {
+              /* ignore */
+            }
+          }
+          clearKeepalive();
+        }, PONG_TIMEOUT_MS);
+      }, PING_INTERVAL_MS);
+    }
+
+    function onAuthenticated() {
+      if (authenticated) return;
+      authenticated = true;
+      sendJson(socket, { type: "auth_ok" });
+      startKeepalive();
+    }
 
     const queryToken = extractTokenFromRequest(request);
     if (queryToken && verifyAiAgentToken(queryToken)) {
-      authenticated = true;
-      sendJson(socket, { type: "auth_ok" });
+      onAuthenticated();
     }
+
+    socket.on("close", () => {
+      clearKeepalive();
+    });
+
+    socket.on("error", () => {
+      clearKeepalive();
+    });
 
     socket.on("message", (raw) => {
       void (async () => {
@@ -128,8 +202,7 @@ export function registerAiAgentWs(fastify) {
 
         if (type === "auth") {
           if (verifyAiAgentToken(msg.token)) {
-            authenticated = true;
-            sendJson(socket, { type: "auth_ok" });
+            onAuthenticated();
           } else {
             sendJson(socket, { type: "error", message: "Unauthorized" });
             socket.close();
@@ -155,11 +228,18 @@ export function registerAiAgentWs(fastify) {
           return;
         }
 
+        // Agent → MiniPC ping
         if (type === "ping") {
           sendJson(socket, {
             type: "pong",
             at: new Date().toISOString(),
           });
+          return;
+        }
+
+        // MiniPC → Agent ping, agent trả pong
+        if (type === "pong") {
+          notePong();
           return;
         }
 

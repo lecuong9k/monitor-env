@@ -50,6 +50,16 @@ ws.on("message", (raw) => {
     return;
   }
 
+  // MiniPC keepalive — agent phải trả pong
+  if (msg.type === "ping") {
+    send({ type: "pong", at: new Date().toISOString() });
+    return;
+  }
+
+  if (msg.type === "pong") {
+    return;
+  }
+
   if (msg.type === "cameras") {
     cameras = Array.isArray(msg.cameras) ? msg.cameras : [];
     const cameraId =
