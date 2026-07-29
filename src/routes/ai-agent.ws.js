@@ -5,6 +5,12 @@ import {
   isAiAgentGatewayEnabled,
   verifyAiAgentToken,
 } from "../edge/aiAgentAuth.js";
+import {
+  registerAiAgentSocket,
+  unregisterAiAgentSocket,
+  sendCachedAiEventConfig,
+  requestAiEventConfigFromMbox,
+} from "../edge/aiAgentHub.js";
 
 const MAX_THUMBNAIL_BYTES =
   Number(process.env.EDGE_AI_EVENT_MAX_THUMBNAIL_BYTES) || 512 * 1024;
@@ -99,6 +105,7 @@ function handleAiEvent(socket, msg) {
 /**
  * WS /ws/ai-agent — Edge AI agent LAN:
  * auth → get_cameras / ai_event / ping↔pong keepalive
+ * MiniPC → Agent: ai_event_config (sau auth hoặc khi Mbox push)
  */
 export function registerAiAgentWs(fastify) {
   fastify.get("/ws/ai-agent", { websocket: true }, (socket, request) => {
@@ -173,8 +180,12 @@ export function registerAiAgentWs(fastify) {
     function onAuthenticated() {
       if (authenticated) return;
       authenticated = true;
+      registerAiAgentSocket(socket);
       sendJson(socket, { type: "auth_ok" });
       startKeepalive();
+      if (!sendCachedAiEventConfig(socket)) {
+        requestAiEventConfigFromMbox();
+      }
     }
 
     const queryToken = extractTokenFromRequest(request);
@@ -184,12 +195,13 @@ export function registerAiAgentWs(fastify) {
 
     socket.on("close", () => {
       clearKeepalive();
+      unregisterAiAgentSocket(socket);
     });
 
     socket.on("error", () => {
       clearKeepalive();
+      unregisterAiAgentSocket(socket);
     });
-
     socket.on("message", (raw) => {
       void (async () => {
         const msg = parseMessage(raw);

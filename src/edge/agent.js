@@ -2,6 +2,10 @@ import WebSocket from "ws";
 import os from "os";
 import { executeLocalRpc } from "./localRpc.js";
 import { collectSystemStats } from "./systemStats.js";
+import {
+  broadcastAiEventConfig,
+  setRequestAiEventConfigFromMbox,
+} from "./aiAgentHub.js";
 
 const MIN_RECONNECT_MS = Number(process.env.EDGE_RECONNECT_MIN_MS) || 5_000;
 const MAX_RECONNECT_MS = Number(process.env.EDGE_RECONNECT_MAX_MS) || 60_000;
@@ -122,6 +126,11 @@ function handleMessage(raw) {
     return;
   }
 
+  if (msg.type === "ai_event_config") {
+    broadcastAiEventConfig(msg);
+    return;
+  }
+
   if (msg.type === "rpc") {
     void handleRpc(msg);
   }
@@ -195,6 +204,11 @@ export function startEdgeAgent() {
     );
     return;
   }
+
+  setRequestAiEventConfigFromMbox(() => {
+    if (!isEdgeRegistered()) return;
+    sendJson({ type: "get_ai_event_config" });
+  });
 
   stopped = false;
   connect();

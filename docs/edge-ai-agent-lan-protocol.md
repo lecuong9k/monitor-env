@@ -108,6 +108,34 @@ MiniPC → Agent:
 
 hoặc `{ "ok": false, "forwarded": false, "error": "edge offline" }`.
 
+### Cấu hình sự kiện AI (`ai_event_config`)
+
+MiniPC nhận config từ Mbox (`/edge/ws`) rồi forward xuống mọi AI Agent đã auth:
+
+```json
+{
+  "type": "ai_event_config",
+  "enabledAiEvents": ["weapon_detected", "fire_detected"],
+  "updatedAt": "2026-07-29T02:00:00.000Z"
+}
+```
+
+| Thời điểm                               | Hành vi                                                                                |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| Edge register với Mbox                  | Mbox push `ai_event_config` → MiniPC cache + broadcast                                 |
+| Operator lưu cấu hình cột (có `edgeId`) | Mbox push ngay nếu MiniPC online                                                       |
+| AI Agent `auth_ok`                      | MiniPC gửi cache nếu có; không có thì gửi `{ "type": "get_ai_event_config" }` lên Mbox |
+
+MiniPC → Mbox (khi chưa có cache):
+
+```json
+{ "type": "get_ai_event_config" }
+```
+
+Mbox → MiniPC: message `ai_event_config` như trên.
+
+Agent nên chỉ submit `ai_event` cho các `eventType` trong `enabledAiEvents`. `[]` = tắt hết.
+
 ### Heartbeat (ping / pong)
 
 Hai chiều sau khi `auth_ok`:
@@ -133,5 +161,6 @@ EDGE_AI_AGENT_TOKEN=... MINIPC_WS_URL=ws://127.0.0.1:3000/ws/ai-agent \
 
 - [`src/routes/ai-agent.ws.js`](../src/routes/ai-agent.ws.js)
 - [`src/edge/aiAgentAuth.js`](../src/edge/aiAgentAuth.js)
-- [`src/edge/agent.js`](../src/edge/agent.js) — `forwardAiEvent`
+- [`src/edge/aiAgentHub.js`](../src/edge/aiAgentHub.js) — registry socket + cache `ai_event_config`
+- [`src/edge/agent.js`](../src/edge/agent.js) — `forwardAiEvent`, relay `ai_event_config`
 - Camera service: `GET /cameras/ai-agent-config` (internal, API key)
