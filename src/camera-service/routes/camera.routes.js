@@ -5,6 +5,7 @@ import {
   getCameraStreamOptionsController,
   getCameraStreamUrlController,
   listCamerasController,
+  listCamerasForAiAgentController,
   listCamerasRegistryController,
   ptzController,
   restartCameraStreamController,
@@ -21,6 +22,7 @@ import {
 export default async function cameraRoutes(fastify) {
   fastify.get("/cameras", listCamerasController);
   fastify.get("/cameras/registry", listCamerasRegistryController);
+  fastify.get("/cameras/ai-agent-config", listCamerasForAiAgentController);
   fastify.post("/cameras", createCameraController);
   fastify.get("/cameras/:id", getCameraController);
   fastify.put("/cameras/:id", updateCameraController);

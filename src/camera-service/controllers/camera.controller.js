@@ -7,6 +7,7 @@ import {
   getCameraStreamOptions,
   getCameraStreamUrl,
   listCameras,
+  listCamerasForAiAgent,
   listCamerasRegistry,
   restartCameraStream,
   startCameraStream,
@@ -46,6 +47,10 @@ export async function listCamerasController(request) {
 
 export async function listCamerasRegistryController() {
   return listCamerasRegistry();
+}
+
+export async function listCamerasForAiAgentController() {
+  return listCamerasForAiAgent();
 }
 
 export async function getCameraController(request, reply) {

@@ -1,5 +1,6 @@
 import {
   findAllCameras,
+  findAllCamerasWithSecrets,
   findCameraById,
   insertCamera,
   softDeleteCamera,
@@ -56,6 +57,32 @@ export function getCameraById(cameraId) {
 
 export function listCamerasRegistry() {
   return findAllCameras().map((row) => toAdminCamera(row));
+}
+
+/**
+ * Full camera config (kèm password) cho Edge AI agent.
+ * `cameraId` = mediamtx_path (ổn định hơn id số).
+ */
+export function listCamerasForAiAgent() {
+  return findAllCamerasWithSecrets({ activeOnly: true }).map((cam) => ({
+    id: cam.id,
+    cameraId: String(cam.mediamtx_path ?? "").trim() || String(cam.id),
+    name: cam.name,
+    host: cam.host,
+    onvif_port: cam.onvif_port,
+    rtsp_port: cam.rtsp_port,
+    username: cam.username,
+    password: cam.password,
+    rtsp_url_override: cam.rtsp_url_override ?? null,
+    rtsp_path_main: cam.rtsp_path_main,
+    rtsp_path_sub: cam.rtsp_path_sub,
+    rtsp_path_mobile: cam.rtsp_path_mobile,
+    ptz_enabled: cam.ptz_enabled,
+    mediamtx_path: cam.mediamtx_path,
+    stream_quality: cam.stream_quality,
+    home_preset_token: cam.home_preset_token,
+    status: cam.status,
+  }));
 }
 
 export function getCameraStreamUrl(cameraId, clientContext, qualityId, scope) {
