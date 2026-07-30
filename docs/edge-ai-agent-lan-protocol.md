@@ -10,9 +10,9 @@ Không dùng HTTP cho camera/event. Không kết nối thẳng Mbox — MiniPC r
 
 | Biến                                                | Nơi            | Mô tả                                    |
 | --------------------------------------------------- | -------------- | ---------------------------------------- |
-| `EDGE_AI_AGENT_TOKEN`                               | MiniPC + agent | Shared secret LAN; gateway tắt nếu empty |
+| `AI_AGENT_TOKEN`                                    | Mbox + MiniPC + agent | Token AI canonical; gateway tắt nếu empty |
 | `EDGE_AI_EVENT_MAX_THUMBNAIL_BYTES`                 | MiniPC         | Mặc định `524288` (512KB)                |
-| `MBOX_EDGE_WS_URL` / `EDGE_ID` / `EDGE_AGENT_TOKEN` | MiniPC         | Cần online để `forwarded: true`          |
+| `MBOX_EDGE_WS_URL` / `DEVICE_ID` / `EDGE_AGENT_TOKEN` | MiniPC         | Cần online để `forwarded: true`          |
 
 ## Luồng
 
@@ -33,7 +33,7 @@ Agent **không** bắt buộc pull qua MediaMTX MiniPC. `get_cameras` trả full
 Agent → MiniPC:
 
 ```json
-{ "type": "auth", "token": "<EDGE_AI_AGENT_TOKEN>" }
+{ "type": "auth", "token": "<AI_AGENT_TOKEN>" }
 ```
 
 Hoặc token trên query: `ws://.../ws/ai-agent?token=...` (nhận `auth_ok` ngay).
@@ -98,7 +98,7 @@ Agent → MiniPC:
 }
 ```
 
-Không gửi `edgeId` — Mbox gắn từ session MiniPC.
+Không gửi `deviceId` — Mbox gắn từ session MiniPC.
 
 MiniPC → Agent:
 
@@ -123,7 +123,7 @@ MiniPC nhận config từ Mbox (`/edge/ws`) rồi forward xuống mọi AI Agent
 | Thời điểm                               | Hành vi                                                                                |
 | --------------------------------------- | -------------------------------------------------------------------------------------- |
 | Edge register với Mbox                  | Mbox push `ai_event_config` → MiniPC cache + broadcast                                 |
-| Operator lưu cấu hình cột (có `edgeId`) | Mbox push ngay nếu MiniPC online                                                       |
+| Operator lưu cấu hình cột (có `deviceId`) | Mbox push ngay nếu MiniPC online                                                       |
 | AI Agent `auth_ok`                      | MiniPC gửi cache nếu có; không có thì gửi `{ "type": "get_ai_event_config" }` lên Mbox |
 
 MiniPC → Mbox (khi chưa có cache):
@@ -153,7 +153,7 @@ Agent mẫu / production **bắt buộc** xử lý `ping` từ MiniPC và gửi 
 
 ```bash
 cd monitor-env-be
-EDGE_AI_AGENT_TOKEN=... MINIPC_WS_URL=ws://127.0.0.1:3000/ws/ai-agent \
+AI_AGENT_TOKEN=... MINIPC_WS_URL=ws://127.0.0.1:3000/ws/ai-agent \
   node scripts/ai-agent-ws-sample.mjs
 ```
 

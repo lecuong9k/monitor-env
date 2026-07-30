@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "crypto";
 
 export function getAiAgentToken() {
-  return String(process.env.EDGE_AI_AGENT_TOKEN || "").trim();
+  return String(process.env.AI_AGENT_TOKEN || "").trim();
 }
 
 export function isAiAgentGatewayEnabled() {

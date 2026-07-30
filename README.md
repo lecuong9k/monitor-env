@@ -34,10 +34,10 @@ Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop`
 
 | Biến                                | Mô tả                                              |
 | ----------------------------------- | -------------------------------------------------- |
-| `EDGE_ID`                           | Unique cho mỗi MiniPC                              |
+| `DEVICE_ID`                           | Unique cho mỗi MiniPC                              |
 | `MBOX_EDGE_WS_URL`                  | `ws://<mbox-ip>:20001/edge/ws`                     |
 | `EDGE_AGENT_TOKEN`                  | Trùng với Mbox                                     |
-| `EDGE_AI_AGENT_TOKEN`               | Secret LAN cho Edge AI agent (`WS /ws/ai-agent`)   |
+| `AI_AGENT_TOKEN`                    | Token AI canonical, trùng với Mbox/Dock AI agent   |
 | `MEDIAMTX_LOCAL_API_URL`            | `http://127.0.0.1:9997`                            |
 | `MEDIAMTX_LOCAL_WEBRTC_URL`         | `http://<lan-ip>:8889` (tùy chọn, auto-detect LAN) |
 | `MEDIAMTX_CENTRAL_API_URL`          | `http://<mbox-ip>:9997`                            |
@@ -87,7 +87,7 @@ npm run dev
 
 ### Edge AI agent (LAN)
 
-Máy AI cùng LAN kết nối `WS /ws/ai-agent` (auth `EDGE_AI_AGENT_TOKEN`) để lấy full config camera và gửi `ai_event`; MiniPC relay lên Mbox. Chi tiết: [docs/edge-ai-agent-lan-protocol.md](docs/edge-ai-agent-lan-protocol.md).
+Máy AI cùng LAN kết nối `WS /ws/ai-agent` (auth `AI_AGENT_TOKEN`) để lấy full config camera và gửi `ai_event`; MiniPC relay lên Mbox. Chi tiết: [docs/edge-ai-agent-lan-protocol.md](docs/edge-ai-agent-lan-protocol.md).
 
 ### API stream (scope)
 

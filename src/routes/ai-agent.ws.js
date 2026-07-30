@@ -112,7 +112,7 @@ export function registerAiAgentWs(fastify) {
     if (!isAiAgentGatewayEnabled()) {
       sendJson(socket, {
         type: "error",
-        message: "AI agent gateway disabled — set EDGE_AI_AGENT_TOKEN",
+        message: "AI agent gateway disabled — set AI_AGENT_TOKEN",
       });
       socket.close();
       return;

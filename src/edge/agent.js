@@ -21,15 +21,15 @@ let registered = false;
 function getConfig() {
   return {
     url: String(process.env.MBOX_EDGE_WS_URL || "").trim(),
-    edgeId: String(process.env.EDGE_ID || "").trim(),
+    deviceId: String(process.env.DEVICE_ID || "").trim(),
     token: String(process.env.EDGE_AGENT_TOKEN || "").trim(),
     streamMode: String(process.env.STREAM_MODE || "webrtc").trim(),
   };
 }
 
 function isAgentEnabled() {
-  const { url, edgeId } = getConfig();
-  return Boolean(url && edgeId);
+  const { url, deviceId } = getConfig();
+  return Boolean(url && deviceId);
 }
 
 function sendJson(payload) {
@@ -53,7 +53,7 @@ async function collectHeartbeatPayload() {
 
   return {
     type: "heartbeat",
-    edgeId: getConfig().edgeId,
+    deviceId: getConfig().deviceId,
     stats,
     health,
     streamMode: getConfig().streamMode,
@@ -115,7 +115,7 @@ function handleMessage(raw) {
 
   if (msg.type === "registered") {
     registered = true;
-    console.log(`[edge-agent] Registered as ${msg.edgeId}`);
+    console.log(`[edge-agent] Registered as ${msg.deviceId}`);
     void sendHeartbeat();
     startStatusReporter();
     return;
@@ -146,8 +146,8 @@ function scheduleReconnect() {
 }
 
 function connect() {
-  const { url, edgeId, token, streamMode } = getConfig();
-  if (!url || !edgeId) return;
+  const { url, deviceId, token, streamMode } = getConfig();
+  if (!url || !deviceId) return;
 
   registered = false;
   stopStatusReporter();
@@ -162,14 +162,14 @@ function connect() {
     ws = null;
   }
 
-  console.log(`[edge-agent] Connecting to ${url} as ${edgeId}...`);
+  console.log(`[edge-agent] Connecting to ${url} as ${deviceId}...`);
   ws = new WebSocket(url);
 
   ws.on("open", () => {
     reconnectDelay = MIN_RECONNECT_MS;
     sendJson({
       type: "register",
-      edgeId,
+      deviceId,
       token,
       meta: {
         hostname: os.hostname(),
@@ -200,7 +200,7 @@ function connect() {
 export function startEdgeAgent() {
   if (!isAgentEnabled()) {
     console.log(
-      "[edge-agent] Disabled — set MBOX_EDGE_WS_URL and EDGE_ID to enable",
+      "[edge-agent] Disabled — set MBOX_EDGE_WS_URL and DEVICE_ID to enable",
     );
     return;
   }
@@ -239,7 +239,7 @@ export function isEdgeRegistered() {
 }
 
 /**
- * Relay ai_event lên Mbox qua WS edge (không gắn edgeId — Mbox lấy từ session).
+ * Relay ai_event lên Mbox qua WS edge (không gắn deviceId — Mbox lấy từ session).
  * @param {Record<string, unknown>} msg
  * @returns {{ ok: boolean, forwarded: boolean, error?: string }}
  */
@@ -248,7 +248,7 @@ export function forwardAiEvent(msg) {
     return {
       ok: false,
       forwarded: false,
-      error: "Edge agent chưa cấu hình (MBOX_EDGE_WS_URL / EDGE_ID)",
+      error: "Edge agent chưa cấu hình (MBOX_EDGE_WS_URL / DEVICE_ID)",
     };
   }
   if (!isEdgeRegistered()) {

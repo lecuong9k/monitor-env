@@ -3,7 +3,7 @@
  * Mẫu Edge AI agent (WS-only): auth → get_cameras → gửi 1 ai_event giả lập.
  *
  * Usage:
- *   EDGE_AI_AGENT_TOKEN=... MINIPC_WS_URL=ws://127.0.0.1:3000/ws/ai-agent \
+ *   AI_AGENT_TOKEN=... MINIPC_WS_URL=ws://127.0.0.1:3000/ws/ai-agent \
  *     node scripts/ai-agent-ws-sample.mjs
  */
 import WebSocket from "ws";
@@ -11,10 +11,10 @@ import WebSocket from "ws";
 const url = String(
   process.env.MINIPC_WS_URL || "ws://127.0.0.1:3000/ws/ai-agent",
 ).trim();
-const token = String(process.env.EDGE_AI_AGENT_TOKEN || "").trim();
+const token = String(process.env.AI_AGENT_TOKEN || "").trim();
 
 if (!token) {
-  console.error("Thiếu EDGE_AI_AGENT_TOKEN");
+  console.error("Thiếu AI_AGENT_TOKEN");
   process.exit(1);
 }
 
