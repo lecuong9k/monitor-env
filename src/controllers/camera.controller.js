@@ -23,6 +23,19 @@ export async function listCamerasController(request, reply) {
   }
 }
 
+/** Full camera config cho AI Agent — phục vụ edge RPC từ Mbox (không public LAN). */
+export async function listCamerasForAiAgentController(request, reply) {
+  try {
+    return await cameraClient.listCamerasForAiAgent();
+  } catch (err) {
+    request.log.error(err);
+    const status = err.status === 401 ? 503 : err.status === 503 ? 503 : 500;
+    return reply.code(status).send({
+      error: err.message || "Camera service không khả dụng",
+    });
+  }
+}
+
 export async function getCameraStreamUrlController(request, reply) {
   try {
     return await cameraClient.getCameraStreamUrl(

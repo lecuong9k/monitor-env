@@ -34,10 +34,10 @@ Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop`
 
 | Biến                                | Mô tả                                              |
 | ----------------------------------- | -------------------------------------------------- |
-| `DEVICE_ID`                           | Unique cho mỗi MiniPC                              |
 | `MBOX_EDGE_WS_URL`                  | `ws://<mbox-ip>:20001/edge/ws`                     |
 | `EDGE_AGENT_TOKEN`                  | Trùng với Mbox                                     |
-| `AI_AGENT_TOKEN`                    | Token AI canonical, trùng với Mbox/Dock AI agent   |
+| `MBOX_TEMP_INGEST_URL`              | `http://<mbox-ip>:20003` — Modbus đẩy log nhiệt độ |
+| `DEVICE_MODEL`                      | Tùy chọn — gắn vào payload ingest                  |
 | `MEDIAMTX_LOCAL_API_URL`            | `http://127.0.0.1:9997`                            |
 | `MEDIAMTX_LOCAL_WEBRTC_URL`         | `http://<lan-ip>:8889` (tùy chọn, auto-detect LAN) |
 | `MEDIAMTX_CENTRAL_API_URL`          | `http://<mbox-ip>:9997`                            |
@@ -51,6 +51,8 @@ Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop`
 | `STREAM_IDLE_POLL_MS`               | 15000 — chu kỳ lifecycle poller                    |
 | `STREAM_IDLE_STOP_MS`               | 120000 — dừng ingest khi idle                      |
 | `STREAM_MTX_SWEEP_EVERY_POLLS`      | 4 — sweep path MTX mỗi N chu kỳ                    |
+
+**Định danh MiniPC:** không cần `DEVICE_ID` trong env. Lần đầu chạy, BE tự sinh `machineCode` (lưu SQLite), xem tại UI **Cấu hình → Cấu hình chung** hoặc `GET /device-identity`. Khi tạo cột trên Mbox, nhập đúng mã máy này.
 
 ### 2) MediaMTX local
 
@@ -85,9 +87,9 @@ npm run camera-service:dev
 npm run dev
 ```
 
-### Edge AI agent (LAN)
+### AI Agent
 
-Máy AI cùng LAN kết nối `WS /ws/ai-agent` (auth `AI_AGENT_TOKEN`) để lấy full config camera và gửi `ai_event`; MiniPC relay lên Mbox. Chi tiết: [docs/edge-ai-agent-lan-protocol.md](docs/edge-ai-agent-lan-protocol.md).
+AI Agent **không** kết nối MiniPC. Kết nối trực tiếp Mbox `WS /ws/ai-agent` (`AI_AGENT_TOKEN`). MiniPC chỉ giữ `/edge/ws` cho stream/PTZ/RPC; Mbox gọi `GET /cameras/ai-agent-config` qua edge khi AI cần danh sách camera cột.
 
 ### API stream (scope)
 

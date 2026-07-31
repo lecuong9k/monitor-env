@@ -66,6 +66,14 @@ const TABLE_DEFINITIONS = {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `,
+  device_identity: `
+    CREATE TABLE IF NOT EXISTS device_identity (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        machine_code TEXT NOT NULL UNIQUE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP
+    )
+  `,
 };
 
 /** Index bổ sung (dùng IF NOT EXISTS). */

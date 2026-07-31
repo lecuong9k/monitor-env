@@ -103,10 +103,8 @@ check_required_env() {
 
   for var in \
     CAMERA_SERVICE_API_KEY \
-    DEVICE_ID \
     MBOX_EDGE_WS_URL \
     EDGE_AGENT_TOKEN \
-    AI_AGENT_TOKEN \
     MEDIAMTX_LOCAL_API_URL \
     MEDIAMTX_CENTRAL_API_URL \
     MEDIAMTX_CENTRAL_WEBRTC_URL; do
@@ -118,10 +116,6 @@ check_required_env() {
 
   if [ "$missing" -eq 1 ]; then
     die "Thiếu biến bắt buộc trong .env.production hoặc .env.local"
-  fi
-
-  if ! printf '%s' "$DEVICE_ID" | grep -Eq '^[a-zA-Z0-9._-]{1,64}$'; then
-    die "DEVICE_ID không hợp lệ: $DEVICE_ID (1–64 ký tự: a-z A-Z 0-9 . _ -)"
   fi
 
   if [ "${STREAM_MODE:-webrtc}" != "webrtc" ]; then
@@ -207,21 +201,21 @@ cleanup_legacy_mediamtx() {
 }
 
 wait_edge_agent_registered() {
-  local device_id=$1
+  local machine_code=$1
   local tries=${2:-25}
   local i=1
   local logs
 
-  echo "Chờ edge agent đăng ký DEVICE_ID=${device_id}..."
+  echo "Chờ edge agent đăng ký machineCode=${machine_code}..."
 
   while [ "$i" -le "$tries" ]; do
     logs=$(pm2 logs monitor-env --lines 80 --nostream 2>/dev/null || true)
-    if printf '%s' "$logs" | grep -q "Registered as ${device_id}"; then
-      echo "OK: edge agent đã đăng ký (${device_id})"
+    if printf '%s' "$logs" | grep -q "Registered as ${machine_code}"; then
+      echo "OK: edge agent đã đăng ký (${machine_code})"
       return 0
     fi
-    if printf '%s' "$logs" | grep -qi "Unauthorized\|invalid deviceId"; then
-      die "Edge agent bị từ chối — kiểm tra EDGE_AGENT_TOKEN và DEVICE_ID"
+    if printf '%s' "$logs" | grep -qi "Unauthorized\|invalid machineCode\|invalid deviceId"; then
+      die "Edge agent bị từ chối — kiểm tra EDGE_AGENT_TOKEN và machineCode"
     fi
     sleep 2
     i=$((i + 1))
@@ -232,22 +226,30 @@ wait_edge_agent_registered() {
 }
 
 verify_edge_on_mbox() {
-  local mbox_http device_id=$1
+  local mbox_http machine_code=$1
 
   mbox_http="$(mbox_http_base_from_ws_url "$MBOX_EDGE_WS_URL")"
 
-  if ! curl -sf --connect-timeout 5 "${mbox_http}/api/edge/${device_id}/health" >/dev/null 2>&1; then
-    warn "Mbox chưa thấy edge online: GET /api/edge/${device_id}/health"
+  if ! curl -sf --connect-timeout 5 "${mbox_http}/api/edge/${machine_code}/health" >/dev/null 2>&1; then
+    warn "Mbox chưa thấy edge online: GET /api/edge/${machine_code}/health"
     return 1
   fi
 
-  if curl -sf "${mbox_http}/api/edge/${device_id}/health" | grep -q '"online":true'; then
-    echo "OK: Mbox xác nhận edge ${device_id} online"
+  if curl -sf "${mbox_http}/api/edge/${machine_code}/health" | grep -q '"online":true'; then
+    echo "OK: Mbox xác nhận edge ${machine_code} online"
     return 0
   fi
 
-  warn "Edge ${device_id} chưa online trên Mbox"
+  warn "Edge ${machine_code} chưa online trên Mbox"
   return 1
+}
+
+fetch_local_machine_code() {
+  local code
+  code=$(curl -sf --connect-timeout 5 "http://127.0.0.1:3000/device-identity" 2>/dev/null \
+    | sed -n 's/.*"machineCode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    | head -n1)
+  printf '%s' "$code"
 }
 
 # --- Main ---
@@ -356,15 +358,21 @@ else
 fi
 
 log "Kiểm tra edge agent → Mbox"
-wait_edge_agent_registered "$DEVICE_ID" || true
-verify_edge_on_mbox "$DEVICE_ID" || true
+MACHINE_CODE="$(fetch_local_machine_code)"
+if [ -z "$MACHINE_CODE" ]; then
+  warn "Không đọc được machineCode từ GET /device-identity"
+else
+  echo "machineCode  : ${MACHINE_CODE}"
+  wait_edge_agent_registered "$MACHINE_CODE" || true
+  verify_edge_on_mbox "$MACHINE_CODE" || true
+fi
 
 log "Deploy hoàn tất"
 pm2 list
 echo ""
 echo "────────────────────────────────────────"
 echo "MiniPC     : $(hostname 2>/dev/null || echo unknown)"
-echo "DEVICE_ID    : ${DEVICE_ID}"
+echo "machineCode  : ${MACHINE_CODE:-unknown}"
 echo "Mbox WS    : ${MBOX_EDGE_WS_URL}"
 echo "MediaMTX local : http://127.0.0.1:8889 (MiniPC UI WHEP)"
 echo "MediaMTX central: ${MEDIAMTX_CENTRAL_WEBRTC_URL:-${MEDIAMTX_WEBRTC_URL:-chưa cấu hình}} (Mbox UI WHEP)"
@@ -374,5 +382,7 @@ echo ""
 echo "Kiểm tra thêm:"
 echo "  pm2 logs monitor-env --lines 50 | grep edge-agent"
 echo "  curl $(mbox_http_base_from_ws_url "$MBOX_EDGE_WS_URL")/api/edge/status"
-echo "  curl $(mbox_http_base_from_ws_url "$MBOX_EDGE_WS_URL")/api/edge/${DEVICE_ID}/health"
+if [ -n "${MACHINE_CODE:-}" ]; then
+  echo "  curl $(mbox_http_base_from_ws_url "$MBOX_EDGE_WS_URL")/api/edge/${MACHINE_CODE}/health"
+fi
 echo "────────────────────────────────────────"

@@ -3,6 +3,7 @@ import {
   getCameraStreamUrlController,
   heartbeatCameraStreamController,
   listCamerasController,
+  listCamerasForAiAgentController,
   ptzController,
   restartCameraStreamController,
   startCameraStreamController,
@@ -23,6 +24,8 @@ import {
 export default async function cameraRoutes(fastify) {
   fastify.get("/cameras", listCamerasController);
   fastify.get("/cameras/registry", listCamerasRegistryController);
+  // Trước /cameras/:id — edge RPC từ Mbox cho AI Agent temp get_cameras
+  fastify.get("/cameras/ai-agent-config", listCamerasForAiAgentController);
   fastify.post("/cameras", createCameraController);
   fastify.get("/cameras/:id", getCameraController);
   fastify.put("/cameras/:id", updateCameraController);

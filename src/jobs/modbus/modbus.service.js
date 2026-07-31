@@ -2,6 +2,7 @@ import ModbusRTU from "modbus-serial";
 import { checkPhysicalPorts } from "../serialPort.js";
 import db from "../../database/sqlite.js";
 import { saveDataLogging } from "../../services/data-logging.service.js";
+import { ensureMachineCode } from "../../services/device-identity.service.js";
 
 const workers = new Map();
 const TIMEOUT = 3000;
@@ -120,7 +121,7 @@ async function stopWorker(workerKey) {
 
   worker.running = false;
   try {
-    await worker.client.close().catch(() => { });
+    await worker.client.close().catch(() => {});
   } catch (err) {
     // ignore close failures when port is already closed
   }
@@ -168,7 +169,7 @@ async function pollingLoop(worker) {
         console.error(`Poll error ${device.data_name}:`, err.message);
         await saveErrorLog(device, err);
         try {
-          await client.close().catch(() => { });
+          await client.close().catch(() => {});
         } catch (e) {
           // ignore close failures
         }
@@ -219,10 +220,10 @@ async function pollDevice(client, device) {
   try {
     const data = device.recipe
       ? await calibrateFromString(
-        response.data,
-        device.recipe,
-        device.recipe_float,
-      )
+          response.data,
+          device.recipe,
+          device.recipe_float,
+        )
       : response.data;
     const convertedData = buildConvertData(device.data_name, data);
     Object.assign(DATA_DEVICE, convertedData);
@@ -324,6 +325,10 @@ function parseConfig(config) {
 }
 // startModbusWorkers()
 async function sendToServer(data) {
+  const ingestUrl = String(process.env.MBOX_TEMP_INGEST_URL || "").trim();
+  if (!ingestUrl) return;
+  if (!data || typeof data !== "object" || !Object.keys(data).length) return;
+
   try {
     const normalizedData = {};
     const keepLowercase = ["temperature", "humidity", "ver"];
@@ -334,24 +339,29 @@ async function sendToServer(data) {
         normalizedData[key.toUpperCase()] = value;
       }
     }
+
     const payload = {
-      device_id: "MINI PC",
-      machineCode: "Sensor-mini-pc",
-      deviceModel: "MINI PC 001",
-      ...normalizedData, // Trải phẳng dữ liệu đã được chuẩn hóa tự động ở trên
+      machineCode: ensureMachineCode(),
+      ...normalizedData,
       timestamp: new Date().toISOString(),
     };
+    const deviceModel = String(process.env.DEVICE_MODEL || "").trim();
+    if (deviceModel) payload.deviceModel = deviceModel;
 
-    console.log("Payload thực tế gửi đi:", JSON.stringify(payload));
-    const response = await fetch("http://45.76.152.73:20003", {
+    const response = await fetch(ingestUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      console.error(
+        `[modbus] Temp ingest HTTP ${response.status}:`,
+        text.slice(0, 200),
+      );
+    }
   } catch (err) {
-    console.error("Error sending data to server:", err);
+    console.error("[modbus] Error sending data to temp ingest:", err);
   }
 }
 

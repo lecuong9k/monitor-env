@@ -2,10 +2,7 @@ import WebSocket from "ws";
 import os from "os";
 import { executeLocalRpc } from "./localRpc.js";
 import { collectSystemStats } from "./systemStats.js";
-import {
-  broadcastAiEventConfig,
-  setRequestAiEventConfigFromMbox,
-} from "./aiAgentHub.js";
+import { ensureMachineCode } from "../services/device-identity.service.js";
 
 const MIN_RECONNECT_MS = Number(process.env.EDGE_RECONNECT_MIN_MS) || 5_000;
 const MAX_RECONNECT_MS = Number(process.env.EDGE_RECONNECT_MAX_MS) || 60_000;
@@ -17,19 +14,27 @@ let statusTimer = null;
 let reconnectDelay = MIN_RECONNECT_MS;
 let stopped = false;
 let registered = false;
+let cachedMachineCode = "";
+
+function getMachineCode() {
+  if (!cachedMachineCode) {
+    cachedMachineCode = ensureMachineCode();
+  }
+  return cachedMachineCode;
+}
 
 function getConfig() {
   return {
     url: String(process.env.MBOX_EDGE_WS_URL || "").trim(),
-    deviceId: String(process.env.DEVICE_ID || "").trim(),
+    machineCode: getMachineCode(),
     token: String(process.env.EDGE_AGENT_TOKEN || "").trim(),
     streamMode: String(process.env.STREAM_MODE || "webrtc").trim(),
   };
 }
 
 function isAgentEnabled() {
-  const { url, deviceId } = getConfig();
-  return Boolean(url && deviceId);
+  const { url, machineCode } = getConfig();
+  return Boolean(url && machineCode);
 }
 
 function sendJson(payload) {
@@ -41,6 +46,7 @@ function sendJson(payload) {
 async function collectHeartbeatPayload() {
   const stats = collectSystemStats();
   let health = null;
+  const machineCode = getConfig().machineCode;
 
   try {
     const result = await executeLocalRpc({ method: "GET", path: "/health" });
@@ -53,7 +59,8 @@ async function collectHeartbeatPayload() {
 
   return {
     type: "heartbeat",
-    deviceId: getConfig().deviceId,
+    machineCode,
+    deviceId: machineCode,
     stats,
     health,
     streamMode: getConfig().streamMode,
@@ -115,7 +122,8 @@ function handleMessage(raw) {
 
   if (msg.type === "registered") {
     registered = true;
-    console.log(`[edge-agent] Registered as ${msg.deviceId}`);
+    const id = String(msg.machineCode || msg.deviceId || "").trim();
+    console.log(`[edge-agent] Registered as ${id}`);
     void sendHeartbeat();
     startStatusReporter();
     return;
@@ -123,11 +131,6 @@ function handleMessage(raw) {
 
   if (msg.type === "ping") {
     sendJson({ type: "pong", at: new Date().toISOString() });
-    return;
-  }
-
-  if (msg.type === "ai_event_config") {
-    broadcastAiEventConfig(msg);
     return;
   }
 
@@ -146,8 +149,8 @@ function scheduleReconnect() {
 }
 
 function connect() {
-  const { url, deviceId, token, streamMode } = getConfig();
-  if (!url || !deviceId) return;
+  const { url, machineCode, token, streamMode } = getConfig();
+  if (!url || !machineCode) return;
 
   registered = false;
   stopStatusReporter();
@@ -162,14 +165,15 @@ function connect() {
     ws = null;
   }
 
-  console.log(`[edge-agent] Connecting to ${url} as ${deviceId}...`);
+  console.log(`[edge-agent] Connecting to ${url} as ${machineCode}...`);
   ws = new WebSocket(url);
 
   ws.on("open", () => {
     reconnectDelay = MIN_RECONNECT_MS;
     sendJson({
       type: "register",
-      deviceId,
+      machineCode,
+      deviceId: machineCode,
       token,
       meta: {
         hostname: os.hostname(),
@@ -198,17 +202,28 @@ function connect() {
 }
 
 export function startEdgeAgent() {
-  if (!isAgentEnabled()) {
+  if (!String(process.env.MBOX_EDGE_WS_URL || "").trim()) {
     console.log(
-      "[edge-agent] Disabled — set MBOX_EDGE_WS_URL and DEVICE_ID to enable",
+      "[edge-agent] Disabled — set MBOX_EDGE_WS_URL to enable (machineCode tự sinh)",
     );
     return;
   }
 
-  setRequestAiEventConfigFromMbox(() => {
-    if (!isEdgeRegistered()) return;
-    sendJson({ type: "get_ai_event_config" });
-  });
+  try {
+    ensureMachineCode();
+  } catch (err) {
+    console.warn(
+      `[edge-agent] Disabled — không lấy được machineCode: ${err.message}`,
+    );
+    return;
+  }
+
+  if (!isAgentEnabled()) {
+    console.log(
+      "[edge-agent] Disabled — thiếu MBOX_EDGE_WS_URL hoặc machineCode",
+    );
+    return;
+  }
 
   stopped = false;
   connect();
@@ -236,64 +251,4 @@ export function startEdgeAgent() {
 /** Edge đã register với Mbox và socket còn mở. */
 export function isEdgeRegistered() {
   return registered && ws != null && ws.readyState === WebSocket.OPEN;
-}
-
-/**
- * Relay ai_event lên Mbox qua WS edge (không gắn deviceId — Mbox lấy từ session).
- * @param {Record<string, unknown>} msg
- * @returns {{ ok: boolean, forwarded: boolean, error?: string }}
- */
-export function forwardAiEvent(msg) {
-  if (!isAgentEnabled()) {
-    return {
-      ok: false,
-      forwarded: false,
-      error: "Edge agent chưa cấu hình (MBOX_EDGE_WS_URL / DEVICE_ID)",
-    };
-  }
-  if (!isEdgeRegistered()) {
-    return { ok: false, forwarded: false, error: "edge offline" };
-  }
-
-  const eventType = String(msg?.eventType ?? "").trim();
-  if (!eventType) {
-    return { ok: false, forwarded: false, error: "Thiếu eventType" };
-  }
-
-  const payload = {
-    type: "ai_event",
-    eventType,
-  };
-
-  const cameraId = String(msg?.cameraId ?? "").trim();
-  if (cameraId) payload.cameraId = cameraId;
-
-  const timestamp = String(msg?.timestamp ?? "").trim();
-  if (timestamp) payload.timestamp = timestamp;
-
-  const timestampMs = Number(msg?.timestamp_ms);
-  if (Number.isFinite(timestampMs) && timestampMs > 0) {
-    payload.timestamp_ms = timestampMs;
-  }
-
-  if (msg?.thumbnail != null && String(msg.thumbnail).trim()) {
-    payload.thumbnail = String(msg.thumbnail);
-  }
-
-  if (Array.isArray(msg?.objects)) {
-    payload.objects = msg.objects;
-  }
-
-  const area = String(msg?.area ?? "").trim();
-  if (area) payload.area = area;
-  const location = String(msg?.location ?? "").trim();
-  if (location) payload.location = location;
-  const address = String(msg?.address ?? "").trim();
-  if (address) payload.address = address;
-
-  const sent = sendJson(payload);
-  if (!sent) {
-    return { ok: false, forwarded: false, error: "edge offline" };
-  }
-  return { ok: true, forwarded: true };
 }

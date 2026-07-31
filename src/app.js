@@ -7,12 +7,13 @@ import configsRoutes from "./routes/config.route.js";
 import modbusRtuRoutes from "./routes/modbus-rtu.route.js";
 import dataLoggingRoutes from "./routes/data-logging.routes.js";
 import recipeRoutes from "./routes/recipe.routes.js";
+import deviceIdentityRoutes from "./routes/device-identity.route.js";
 import wsRoutes from "./routes/ws.routes.js";
 import { registerCameraStreamHeartbeatWs } from "./routes/camera-stream-heartbeat.ws.js";
-import { registerAiAgentWs } from "./routes/ai-agent.ws.js";
 import cameraRoutes from "./routes/camera.routes.js";
 import { startModbusWorkers } from "./jobs/modbus/modbus.service.js";
 import { checkCameraServiceHealth } from "./services/camera-client.service.js";
+import { ensureMachineCode } from "./services/device-identity.service.js";
 import { startEdgeAgent } from "./edge/agent.js";
 
 import { registerSecurity } from "./plugins/security.js";
@@ -53,9 +54,9 @@ fastify.register(configsRoutes);
 fastify.register(modbusRtuRoutes);
 fastify.register(dataLoggingRoutes);
 fastify.register(recipeRoutes);
+fastify.register(deviceIdentityRoutes);
 await fastify.register(wsRoutes);
 registerCameraStreamHeartbeatWs(fastify);
-registerAiAgentWs(fastify);
 await fastify.register(cameraRoutes);
 
 if (process.env.STREAM_MODE === "hls") {
@@ -118,7 +119,8 @@ if (hasFeDist) {
     url.startsWith("/configs") ||
     url.startsWith("/modbus-rtu") ||
     url.startsWith("/data-loggings") ||
-    url.startsWith("/recipes");
+    url.startsWith("/recipes") ||
+    url.startsWith("/device-identity");
 
   /** SPA fallback; không trả index.html cho route API (tránh FE parse HTML như JSON). */
   fastify.setNotFoundHandler((request, reply) => {
@@ -171,6 +173,12 @@ const start = async () => {
       host: process.env.HOST || "0.0.0.0",
     });
     console.log("Server started");
+    try {
+      const machineCode = ensureMachineCode();
+      console.log(`Machine code: ${machineCode}`);
+    } catch (err) {
+      fastify.log.warn(`Không khởi tạo machineCode: ${err.message}`);
+    }
     startEdgeAgent();
     if (hasFeDist) {
       console.log(
