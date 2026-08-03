@@ -35,7 +35,7 @@ Mỗi client gửi `viewerId` (UUID trong `sessionStorage`) khi `start` / `stop`
 | Biến                                | Mô tả                                              |
 | ----------------------------------- | -------------------------------------------------- |
 | `MBOX_EDGE_WS_URL`                  | `ws://<mbox-ip>:20001/edge/ws`                     |
-| `EDGE_AGENT_TOKEN`                  | Trùng với Mbox                                     |
+| `EDGE_AGENT_KEY`                  | Trùng với Mbox                                     |
 | `MBOX_TEMP_INGEST_URL`              | `http://<mbox-ip>:20003` — Modbus đẩy log nhiệt độ |
 | `DEVICE_MODEL`                      | Tùy chọn — gắn vào payload ingest                  |
 | `MEDIAMTX_LOCAL_API_URL`            | `http://127.0.0.1:9997`                            |
@@ -89,7 +89,7 @@ npm run dev
 
 ### AI Agent
 
-AI Agent **không** kết nối MiniPC. Kết nối trực tiếp Mbox `WS /ws/ai-agent` (`AI_AGENT_TOKEN`). MiniPC chỉ giữ `/edge/ws` cho stream/PTZ/RPC; Mbox gọi `GET /cameras/ai-agent-config` qua edge khi AI cần danh sách camera cột.
+AI Agent **không** kết nối MiniPC. Kết nối trực tiếp Mbox `WS /ws/ai-agent` (`AI_AGENT_KEY`). MiniPC chỉ giữ `/edge/ws` cho stream/PTZ/RPC; Mbox gọi `GET /cameras/ai-agent-config` qua edge khi AI cần danh sách camera cột.
 
 ### API stream (scope)
 

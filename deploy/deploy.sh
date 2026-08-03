@@ -104,7 +104,7 @@ check_required_env() {
   for var in \
     CAMERA_SERVICE_API_KEY \
     MBOX_EDGE_WS_URL \
-    EDGE_AGENT_TOKEN \
+    EDGE_AGENT_KEY \
     MEDIAMTX_LOCAL_API_URL \
     MEDIAMTX_CENTRAL_API_URL \
     MEDIAMTX_CENTRAL_WEBRTC_URL; do
@@ -215,7 +215,7 @@ wait_edge_agent_registered() {
       return 0
     fi
     if printf '%s' "$logs" | grep -qi "Unauthorized\|invalid machineCode\|invalid deviceId"; then
-      die "Edge agent bị từ chối — kiểm tra EDGE_AGENT_TOKEN và machineCode"
+      die "Edge agent bị từ chối — kiểm tra EDGE_AGENT_KEY và machineCode"
     fi
     sleep 2
     i=$((i + 1))

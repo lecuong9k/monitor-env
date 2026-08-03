@@ -27,7 +27,7 @@ function getConfig() {
   return {
     url: String(process.env.MBOX_EDGE_WS_URL || "").trim(),
     machineCode: getMachineCode(),
-    token: String(process.env.EDGE_AGENT_TOKEN || "").trim(),
+    token: String(process.env.EDGE_AGENT_KEY || "").trim(),
     streamMode: String(process.env.STREAM_MODE || "webrtc").trim(),
   };
 }
