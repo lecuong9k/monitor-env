@@ -32,8 +32,10 @@ import {
   getWebRtcPageUrl,
   getWhepUrl,
   isCentralRelayEnabled,
+  mapPathPlaybackStatus,
   resolveQualityPath,
   waitPathOnline,
+  waitPathReady,
 } from "./mediamtx.service.js";
 import { clientContextFromRequest } from "../utils/webrtc-client-url.js";
 import { resolveActiveVideoEncoder } from "../utils/ffmpeg-encoder.js";
@@ -427,6 +429,7 @@ async function syncPrimaryIngest(state, mtxPath, cameraRtsp, quality) {
 
   if (mtxDirect) {
     await ensurePathSource("local", mtxPath, cameraRtsp);
+    // On-demand pull: path thường online trước khi có tracks; WHEP mới kích hoạt ready.
     await waitPathOnline("local", mtxPath, 20_000);
     state.primaryActive = true;
     state.localMtxActive = true;
@@ -509,7 +512,7 @@ async function syncCentralRelay(state, mtxPath) {
     buildCentralRelayFfmpeg(localReadUrl, centralUrl),
     "ffmpegRelayProcess",
   );
-  await waitPathOnline("central", mtxPath, 20_000);
+  await waitPathReady("central", mtxPath, 20_000);
   state.relayActive = true;
   state.centralRelayActive = true;
   state.centralIdleSince = null;
@@ -758,7 +761,7 @@ function getStreamQualityState(state, camera, qualityId) {
  * @param {StreamQualityId} [qualityId]
  * @param {StreamScope} [scope]
  */
-export function getStreamStatus(
+export async function getStreamStatus(
   cameraId,
   clientContext,
   qualityId,
@@ -780,10 +783,38 @@ export function getStreamStatus(
   const resolvedScope = resolveStreamScope(scope);
   const mtxTarget = resolvedScope === "remote" ? "central" : "local";
 
+  let playback = mapPathPlaybackStatus(null);
+  let readyError = null;
+  if (mtxPath) {
+    try {
+      const stats = await getPathStats(mtxTarget, mtxPath);
+      playback = mapPathPlaybackStatus(stats);
+      if (streaming && !playback.playbackReady) {
+        readyError = `MediaMTX ${mtxTarget} path chưa playback-ready`;
+      } else if (!streaming && !playback.online && stats) {
+        readyError = `MediaMTX ${mtxTarget} path offline`;
+      }
+    } catch (err) {
+      playback = mapPathPlaybackStatus(null);
+      if (streaming) {
+        readyError =
+          err?.message || `Không đọc được MediaMTX ${mtxTarget} path`;
+      }
+    }
+  }
+  const playbackReady = streaming && playback.playbackReady;
+  if (playbackReady) readyError = null;
+
   if (config.streamMode === "webrtc") {
     const whepUrl = getWhepUrl(mtxPath, mtxTarget, clientContext);
     return {
       streaming,
+      playbackReady,
+      online: playback.online,
+      ready: playback.ready,
+      bytesReceived: playback.bytesReceived,
+      readers: playback.readers,
+      readyError,
       scope: resolvedScope,
       mode: "webrtc",
       rtsp_configured: Boolean(state.currentRtspUrl),
@@ -804,6 +835,12 @@ export function getStreamStatus(
     const playlist = hlsPlaylistUrl(cameraId, resolvedQuality);
     return {
       streaming,
+      playbackReady,
+      online: playback.online,
+      ready: playback.ready,
+      bytesReceived: playback.bytesReceived,
+      readers: playback.readers,
+      readyError,
       mode: "hls",
       rtsp_configured: Boolean(state.currentRtspUrl),
       transcode: state.transcodeMode,
@@ -817,6 +854,12 @@ export function getStreamStatus(
 
   return {
     streaming: false,
+    playbackReady: false,
+    online: false,
+    ready: false,
+    bytesReceived: 0,
+    readers: 0,
+    readyError: null,
     mode: "webrtc",
     stream_type: "webrtc",
     mediamtx_path: mtxPath,
@@ -855,11 +898,11 @@ async function startQualityStreamInternal(
     unregisterViewer(state, scope, viewerId);
   };
 
-  const buildResult = (extra = {}) => ({
+  const buildResult = async (extra = {}) => ({
     ok: true,
     viewer_id: viewerId,
     ...extra,
-    ...getStreamStatus(cameraId, clientContext, resolvedQuality, scope),
+    ...(await getStreamStatus(cameraId, clientContext, resolvedQuality, scope)),
   });
 
   try {
@@ -868,7 +911,7 @@ async function startQualityStreamInternal(
       if (config.streamMode === "webrtc" && state.currentRtspUrl) {
         await syncStreamPipeline(state, mtxPath, state.currentRtspUrl, quality);
       }
-      return buildResult({ alreadyRunning: true });
+      return await buildResult({ alreadyRunning: true });
     }
 
     if (
@@ -878,7 +921,7 @@ async function startQualityStreamInternal(
       state.currentRtspUrl
     ) {
       await syncStreamPipeline(state, mtxPath, state.currentRtspUrl, quality);
-      return buildResult({ alreadyRunning: true });
+      return await buildResult({ alreadyRunning: true });
     }
 
     if (
@@ -888,7 +931,7 @@ async function startQualityStreamInternal(
       state.currentRtspUrl
     ) {
       await syncStreamPipeline(state, mtxPath, state.currentRtspUrl, quality);
-      return buildResult({ alreadyRunning: true });
+      return await buildResult({ alreadyRunning: true });
     }
 
     const source = await resolveRtspUrl(cameraId, quality.subtype);
@@ -919,7 +962,7 @@ async function startQualityStreamInternal(
     state.startingPromise = startTask();
     await state.startingPromise;
 
-    return buildResult({ alreadyRunning: false });
+    return await buildResult({ alreadyRunning: false });
   } catch (err) {
     rollbackViewer();
     throw err;
@@ -1174,7 +1217,7 @@ export function getStreamQualityForCamera(cameraId, qualityId) {
   return getStreamQualityState(state, camera, resolvedQuality);
 }
 
-export function getStreamInfo(cameraId, clientContext, qualityId, scope) {
+export async function getStreamInfo(cameraId, clientContext, qualityId, scope) {
   return getStreamStatus(cameraId, clientContext, qualityId, scope);
 }
 

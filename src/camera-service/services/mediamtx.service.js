@@ -80,6 +80,61 @@ export function countPathReaders(pathStats) {
   return 0;
 }
 
+/** @param {Record<string, unknown> | null | undefined} stats */
+export function pathStatsBytesReceived(stats) {
+  if (!stats) return 0;
+  if (typeof stats.bytesReceived === "number") return stats.bytesReceived;
+  if (typeof stats.bytes_received === "number") return stats.bytes_received;
+  return 0;
+}
+
+/** @param {Record<string, unknown> | null | undefined} stats */
+export function pathHasVideoTracks(stats) {
+  if (!stats || !Array.isArray(stats.tracks)) return false;
+  return stats.tracks.some((track) => {
+    // MediaMTX thường trả tracks là string ("H264"), đôi khi là object.
+    const type = String(
+      typeof track === "string"
+        ? track
+        : track?.type || track?.codec || track?.name || "",
+    ).toLowerCase();
+    return (
+      type.includes("video") ||
+      type.includes("h264") ||
+      type.includes("h265") ||
+      type.includes("avc") ||
+      type.includes("hevc")
+    );
+  });
+}
+
+/**
+ * Path sẵn sàng WHEP/playback trên MiniPC.
+ * Pull on-demand: `online` thường có trước `ready`/tracks — WHEP reader mới kích hoạt media.
+ * @param {Record<string, unknown> | null | undefined} stats
+ */
+export function isPathReadyForPlayback(stats) {
+  if (!stats) return false;
+  if (stats.ready === true) return true;
+  if (pathStatsBytesReceived(stats) > 0) return true;
+  if (pathHasVideoTracks(stats)) return true;
+  // On-demand local: online đủ để UI/WHEP bắt đầu (tránh deadlock chờ tracks).
+  return stats.online === true;
+}
+
+/**
+ * @param {Record<string, unknown> | null | undefined} stats
+ */
+export function mapPathPlaybackStatus(stats) {
+  return {
+    online: stats?.online === true,
+    ready: stats?.ready === true,
+    playbackReady: isPathReadyForPlayback(stats),
+    bytesReceived: pathStatsBytesReceived(stats),
+    readers: countPathReaders(stats),
+  };
+}
+
 /**
  * @param {string} pathName
  * @param {MtxTarget} target
@@ -222,10 +277,7 @@ export async function waitPathOnline(target, pathName, timeoutMs = 20_000) {
 
   while (Date.now() < deadline) {
     try {
-      const path = await mtxFetch(
-        target,
-        `/v3/paths/get/${encodeURIComponent(pathName)}`,
-      );
+      const path = await getPathStats(target, pathName);
       if (path?.online === true) return path;
     } catch {
       // path chưa sẵn sàng
@@ -235,6 +287,30 @@ export async function waitPathOnline(target, pathName, timeoutMs = 20_000) {
 
   throw new Error(
     `Timeout chờ MediaMTX ${target} path online — kiểm tra RTSP URL và MediaMTX`,
+  );
+}
+
+/**
+ * Chờ path sẵn sàng playback (online + media).
+ * @param {MtxTarget} target
+ * @param {string} pathName
+ * @param {number} [timeoutMs]
+ */
+export async function waitPathReady(target, pathName, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const path = await getPathStats(target, pathName);
+      if (isPathReadyForPlayback(path)) return path;
+    } catch {
+      // path chưa sẵn sàng
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+
+  throw new Error(
+    `Timeout chờ MediaMTX ${target} path playback-ready — kiểm tra RTSP URL và MediaMTX`,
   );
 }
 
