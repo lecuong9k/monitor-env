@@ -4,7 +4,6 @@ const API_KEY = process.env.CAMERA_SERVICE_API_KEY?.trim() || "";
 
 function serviceHeaders(extra = {}) {
   return {
-    "Content-Type": "application/json",
     "X-Camera-Service-Key": API_KEY,
     ...extra,
   };
@@ -80,11 +79,14 @@ async function parseResponse(res) {
 
 export async function cameraServiceFetch(path, options = {}, request) {
   const url = `${BASE_URL.replace(/\/$/, "")}${path}`;
+  const hasBody = options.body != null;
+  const defaultHeaders = hasBody ? { "Content-Type": "application/json" } : {};
   let res;
   try {
     res = await fetch(url, {
       ...options,
       headers: serviceHeaders({
+        ...defaultHeaders,
         ...clientProxyHeaders(request),
         ...options.headers,
       }),
