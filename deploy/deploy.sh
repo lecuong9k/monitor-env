@@ -261,7 +261,7 @@ require_cmd pm2
 require_cmd curl
 require_cmd unzip
 
-STAGING_BACKUP="${ADMIN_DIR}/monitor-env/backup/$(date +%Y%m%d_%H%M%S)"
+STAGING_BACKUP="${ADMIN_DIR}/backup/$(date +%Y%m%d_%H%M%S)"
 mkdir -p "$STAGING_BACKUP"
 
 if [ -d "$APP_DIR" ]; then

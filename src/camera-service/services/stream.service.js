@@ -33,6 +33,9 @@ import {
   getWhepUrl,
   isCentralRelayEnabled,
   mapPathPlaybackStatus,
+  pathHasVideoTracks,
+  pathStatsBytesReceived,
+  resolveCentralPublishPath,
   resolveQualityPath,
   waitPathOnline,
   waitPathReady,
@@ -67,6 +70,7 @@ function usesMtxDirectIngest() {
  *   remoteViewers: Map<string, { lastSeenAt: number }>;
  *   primaryActive: boolean;
  *   relayActive: boolean;
+ *   localSourceOnDemand: boolean | null;
  *   mtxPathName: string | null;
  *   startingPromise: Promise<void> | null;
  *   syncPromise: Promise<void> | null;
@@ -137,6 +141,7 @@ function createQualityState(qualityId) {
     remoteViewers: new Map(),
     primaryActive: false,
     relayActive: false,
+    localSourceOnDemand: null,
     mtxPathName: null,
     startingPromise: null,
     syncPromise: null,
@@ -385,6 +390,7 @@ async function stopFfmpegIngest(state, mtxPath) {
   }
   state.primaryActive = false;
   state.localMtxActive = false;
+  state.localSourceOnDemand = null;
   state.transcodeMode = false;
 }
 
@@ -413,26 +419,50 @@ async function syncPrimaryIngest(state, mtxPath, cameraRtsp, quality) {
     }
     state.primaryActive = false;
     state.localMtxActive = false;
+    state.localSourceOnDemand = null;
     state.transcodeMode = false;
     return;
   }
 
-  if (state.primaryActive && (state.ffmpegProcess || mtxDirect)) {
+  // Remote relay cần MTX pull luôn (sourceOnDemand=false) để FFmpeg RTSP-read được.
+  const wantOnDemand = !relayDesired(state);
+
+  if (state.primaryActive && mtxDirect) {
+    const needUpgrade =
+      relayDesired(state) && state.localSourceOnDemand !== false;
+    if (!needUpgrade) return;
+    await ensurePathSource("local", mtxPath, cameraRtsp, {
+      sourceOnDemand: false,
+    });
+    await waitLocalPathHasMedia(mtxPath, 20_000);
+    state.localSourceOnDemand = false;
+    state.localMtxActive = true;
+    return;
+  }
+
+  if (state.primaryActive && state.ffmpegProcess) {
     return;
   }
   if (state.primaryActive && !state.ffmpegProcess) {
     state.primaryActive = false;
     state.localMtxActive = false;
+    state.localSourceOnDemand = null;
   }
 
   await stopFfmpegField(state, "ffmpegProcess");
 
   if (mtxDirect) {
-    await ensurePathSource("local", mtxPath, cameraRtsp);
-    // On-demand pull: path thường online trước khi có tracks; WHEP mới kích hoạt ready.
-    await waitPathOnline("local", mtxPath, 20_000);
+    await ensurePathSource("local", mtxPath, cameraRtsp, {
+      sourceOnDemand: wantOnDemand,
+    });
+    // On-demand (chỉ local viewer): không chờ online — WHEP kích hoạt pull.
+    // Remote relay: kéo liên tục rồi chờ có media trước khi FFmpeg đọc RTSP.
+    if (!wantOnDemand) {
+      await waitLocalPathHasMedia(mtxPath, 20_000);
+    }
     state.primaryActive = true;
     state.localMtxActive = true;
+    state.localSourceOnDemand = wantOnDemand;
     state.transcodeMode = false;
     return;
   }
@@ -461,10 +491,47 @@ async function syncPrimaryIngest(state, mtxPath, cameraRtsp, quality) {
   await waitPathOnline("local", mtxPath, 20_000);
   state.primaryActive = true;
   state.localMtxActive = true;
+  state.localSourceOnDemand = null;
 }
 
 /**
- * Relay copy: local MTX → central MTX khi có remote viewer.
+ * Relay luôn đọc từ MTX local (hub). Không đọc thẳng camera —
+ * tránh No route to host / double-pull; MiniPC và Dashboard cùng một nguồn.
+ * @param {string} mtxPath
+ * @returns {{ url: string, via: 'local' }}
+ */
+function resolveRelaySourceUrl(mtxPath) {
+  return { url: getLocalRtspUrl(mtxPath), via: "local" };
+}
+
+/** Path local đã có media thật (không chỉ online on-demand). */
+async function waitLocalPathHasMedia(mtxPath, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const stats = await getPathStats("local", mtxPath);
+      if (
+        stats?.ready === true ||
+        pathStatsBytesReceived(stats) > 0 ||
+        pathHasVideoTracks(stats)
+      ) {
+        return stats;
+      }
+    } catch {
+      /* path chưa sẵn sàng */
+    }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  throw new Error(
+    `Timeout chờ MediaMTX local path có media trước khi relay — ${mtxPath}`,
+  );
+}
+
+const RELAY_START_ATTEMPTS = 3;
+const RELAY_RETRY_DELAY_MS = 800;
+
+/**
+ * Relay copy: MTX local → central MTX khi có remote viewer.
  * @param {QualityStreamState} state
  * @param {string} mtxPath
  */
@@ -490,32 +557,70 @@ async function syncCentralRelay(state, mtxPath) {
     state.centralRelayActive = false;
   }
 
-  if (!state.primaryActive) {
-    await waitPathOnline("local", mtxPath, 20_000);
-  } else if (!state.ffmpegProcess && !usesMtxDirectIngest()) {
-    await waitPathOnline("local", mtxPath, 20_000);
-  }
+  await waitLocalPathHasMedia(mtxPath, 20_000);
 
-  await stopFfmpegField(state, "ffmpegRelayProcess");
-  if (!config.centralPathRegisteredByMbox) {
-    await ensurePathPublisher("central", mtxPath);
-  } else {
-    const centralStats = await getPathStats("central", mtxPath);
-    if (!centralStats?.name) {
-      await ensurePathPublisher("central", mtxPath);
+  // Khớp path Mbox đã đăng ký (có hoặc không prefix live/).
+  const publishPath = await resolveCentralPublishPath(mtxPath);
+  const relaySource = resolveRelaySourceUrl(mtxPath);
+  const centralUrl = getCentralRtspPublishUrl(publishPath);
+
+  /** @type {Error | null} */
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= RELAY_START_ATTEMPTS; attempt++) {
+    await stopFfmpegField(state, "ffmpegRelayProcess");
+
+    /** @type {Error | null} */
+    let relayExitError = null;
+    await launchFfmpeg(
+      state,
+      buildCentralRelayFfmpeg(relaySource.url, centralUrl),
+      "ffmpegRelayProcess",
+      {
+        onExitError(err) {
+          relayExitError =
+            err instanceof Error ? err : new Error(String(err || "relay exit"));
+        },
+      },
+    );
+
+    try {
+      await waitPathReady("central", publishPath, 20_000, {
+        shouldAbort: () => {
+          if (!relayExitError) return null;
+          return new Error(
+            `FFmpeg relay central thất bại (${maskRtspUrl(centralUrl)}): ${relayExitError.message}`,
+          );
+        },
+      });
+      state.relayActive = true;
+      state.centralRelayActive = true;
+      state.centralIdleSince = null;
+      return;
+    } catch (err) {
+      await stopFfmpegField(state, "ffmpegRelayProcess");
+      lastError = err instanceof Error ? err : new Error(String(err));
+      const msg = lastError.message.toLowerCase();
+      const retryable =
+        msg.includes("400") ||
+        msg.includes("bad request") ||
+        msg.includes("connection refused") ||
+        msg.includes("timed out") ||
+        msg.includes("timeout");
+      if (!retryable || attempt >= RELAY_START_ATTEMPTS) break;
+      console.warn(
+        `[stream] Relay attempt ${attempt}/${RELAY_START_ATTEMPTS} failed, retry:`,
+        lastError.message,
+      );
+      await waitLocalPathHasMedia(mtxPath, 10_000).catch(() => null);
+      await new Promise((r) => setTimeout(r, RELAY_RETRY_DELAY_MS));
     }
   }
-  const localReadUrl = getLocalRtspUrl(mtxPath);
-  const centralUrl = getCentralRtspPublishUrl(mtxPath);
-  await launchFfmpeg(
-    state,
-    buildCentralRelayFfmpeg(localReadUrl, centralUrl),
-    "ffmpegRelayProcess",
+
+  const detail = lastError?.message || "waitPathReady central failed";
+  throw new Error(
+    `${detail} (${relaySource.via}=${maskRtspUrl(relaySource.url)} → central=${maskRtspUrl(centralUrl)}, path=${publishPath})`,
   );
-  await waitPathReady("central", mtxPath, 20_000);
-  state.relayActive = true;
-  state.centralRelayActive = true;
-  state.centralIdleSince = null;
 }
 
 /**
@@ -536,10 +641,14 @@ async function syncStreamPipeline(state, mtxPath, cameraRtsp, quality) {
 }
 
 /** @param {QualityStreamState} state @param {import('fluent-ffmpeg').FfmpegCommand} cmd */
-function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess") {
+function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess", options = {}) {
   return new Promise((resolveStart, reject) => {
+    let started = false;
     state[field] = cmd
-      .on("start", () => resolveStart())
+      .on("start", () => {
+        started = true;
+        resolveStart();
+      })
       .on("error", (err) => {
         state[field] = null;
         if (field === "ffmpegProcess") {
@@ -549,7 +658,8 @@ function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess") {
           state.relayActive = false;
           state.centralRelayActive = false;
         }
-        reject(err);
+        options.onExitError?.(err);
+        if (!started) reject(err);
       })
       .on("end", () => {
         state[field] = null;
@@ -560,6 +670,7 @@ function launchFfmpeg(state, cmd, field = "ffmpegRelayProcess") {
           state.relayActive = false;
           state.centralRelayActive = false;
         }
+        options.onExitError?.(new Error("ffmpeg ended before path ready"));
       })
       .run();
   });

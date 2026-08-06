@@ -210,14 +210,52 @@ export function isCentralRelayEnabled() {
 }
 
 /** @param {string} pathName */
+function normalizeMtxPathName(pathName) {
+  return String(pathName || "")
+    .trim()
+    .replace(/^\/+|\/+$/g, "");
+}
+
+/**
+ * Ứng viên path central: không `live/` và có `live/` (Mbox từng ép live/ cho FH).
+ * @param {string} pathName
+ * @returns {string[]}
+ */
+export function centralPathCandidates(pathName) {
+  const raw = normalizeMtxPathName(pathName);
+  if (!raw) return [];
+  const withoutLive = raw.replace(/^live\//i, "");
+  const withLive = withoutLive ? `live/${withoutLive}` : "";
+  return [...new Set([withoutLive, withLive].filter(Boolean))];
+}
+
+/**
+ * Chọn path central đã đăng ký; nếu chưa có thì tạo path không prefix live/ (PTZ).
+ * @param {string} preferredPath
+ */
+export async function resolveCentralPublishPath(preferredPath) {
+  const candidates = centralPathCandidates(preferredPath);
+  for (const p of candidates) {
+    const stats = await getPathStats("central", p);
+    if (stats?.name) return p;
+  }
+  const createPath =
+    normalizeMtxPathName(preferredPath).replace(/^live\//i, "") ||
+    candidates[0];
+  if (!createPath) {
+    throw new Error("mediamtx_path không hợp lệ");
+  }
+  await ensurePathPublisher("central", createPath);
+  return createPath;
+}
+
+/** @param {string} pathName */
 export function getCentralRtspPublishUrl(pathName) {
   const base = config.mediamtx.central.rtspPublishUrl?.replace(/\/$/, "");
   if (!base) {
     throw new Error("MEDIAMTX_CENTRAL_RTSP_PUBLISH_URL chưa cấu hình");
   }
-  const normalized = String(pathName || "")
-    .trim()
-    .replace(/^\/+|\/+$/g, "");
+  const normalized = normalizeMtxPathName(pathName);
   if (!normalized) {
     throw new Error("mediamtx_path không hợp lệ");
   }
@@ -251,11 +289,17 @@ export async function ensurePathPublisher(target, pathName) {
   );
 }
 
-/** MediaMTX pull camera RTSP on-demand. */
-export async function ensurePathSource(target, pathName, rtspUrl) {
+/** MediaMTX pull camera RTSP. Remote relay cần sourceOnDemand=false để RTSP-read ổn định. */
+export async function ensurePathSource(
+  target,
+  pathName,
+  rtspUrl,
+  options = {},
+) {
+  const sourceOnDemand = options.sourceOnDemand !== false;
   const body = {
     source: rtspUrl,
-    sourceOnDemand: true,
+    sourceOnDemand,
     sourceOnDemandStartTimeout: "10s",
     sourceOnDemandCloseAfter: "10s",
     rtspTransport: "tcp",
@@ -295,11 +339,19 @@ export async function waitPathOnline(target, pathName, timeoutMs = 20_000) {
  * @param {MtxTarget} target
  * @param {string} pathName
  * @param {number} [timeoutMs]
+ * @param {{ shouldAbort?: () => Error | null }} [options]
  */
-export async function waitPathReady(target, pathName, timeoutMs = 20_000) {
+export async function waitPathReady(
+  target,
+  pathName,
+  timeoutMs = 20_000,
+  options = {},
+) {
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
+    const abortErr = options.shouldAbort?.() || null;
+    if (abortErr) throw abortErr;
     try {
       const path = await getPathStats(target, pathName);
       if (isPathReadyForPlayback(path)) return path;
