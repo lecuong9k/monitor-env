@@ -1,8 +1,10 @@
+import { randomBytes } from "node:crypto";
 import {
   findAllCameras,
   findAllCamerasWithSecrets,
   findCameraById,
   insertCamera,
+  setCameraMediamtxPath,
   softDeleteCamera,
   toAdminCamera,
   toPublicCamera,
@@ -24,6 +26,41 @@ import {
   startCameraStream,
   stopCameraStream,
 } from "./stream.service.js";
+import { ensureMachineCode } from "../../services/device-identity.service.js";
+
+/** Segment an toàn cho MediaMTX path (chữ/số/._-). */
+function sanitizePathSegment(value, maxLen = 64) {
+  return String(value || "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, maxLen);
+}
+
+/**
+ * Base path ổn định cross-MiniPC: `{machineCode}-{cameraId}`.
+ * @param {string} machineCode
+ * @param {number|string} cameraId
+ */
+export function buildMediamtxPath(machineCode, cameraId) {
+  const code = sanitizePathSegment(machineCode, 64);
+  const id = String(cameraId ?? "").trim();
+  if (!code || !/^\d+$/.test(id)) {
+    throw new Error("Không tạo được MediaMTX path (thiếu machineCode hoặc id)");
+  }
+  return `${code}-${id}`;
+}
+
+function isUniqueConstraintError(err) {
+  const code = String(err?.code ?? "");
+  const message = String(err?.message ?? "");
+  return (
+    code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    code === "SQLITE_CONSTRAINT" ||
+    /UNIQUE constraint failed/i.test(message)
+  );
+}
 
 export async function listCameras(clientContext) {
   const cameras = findAllCameras();
@@ -155,29 +192,52 @@ export async function fetchTalkbackCapabilities(cameraId, qualityId = "main") {
 }
 
 export function createCameraRecord(body) {
-  const required = ["name", "host", "username", "password", "mediamtx_path"];
+  const required = ["name", "host", "username", "password"];
   for (const key of required) {
     if (!body?.[key]) {
       throw new Error(`Thiếu trường bắt buộc: ${key}`);
     }
   }
 
-  const camera = insertCamera({
-    name: body.name,
-    host: body.host,
-    username: body.username,
-    password: body.password,
-    onvif_port: body.onvif_port,
-    rtsp_port: body.rtsp_port,
-    rtsp_url_override: body.rtsp_url_override,
-    rtsp_path_main: body.rtsp_path_main,
-    rtsp_path_sub: body.rtsp_path_sub,
-    rtsp_path_mobile: body.rtsp_path_mobile,
-    ptz_enabled: body.ptz_enabled,
-    mediamtx_path: body.mediamtx_path,
-    stream_quality: body.stream_quality,
-    home_preset_token: body.home_preset_token,
-  });
+  const machineCode = ensureMachineCode();
+  // Placeholder unique tới khi có id — client không được chọn path.
+  const pendingPath = `pending-${randomBytes(6).toString("hex")}`;
+
+  let camera;
+  try {
+    camera = insertCamera({
+      name: body.name,
+      host: body.host,
+      username: body.username,
+      password: body.password,
+      onvif_port: body.onvif_port,
+      rtsp_port: body.rtsp_port,
+      rtsp_url_override: body.rtsp_url_override,
+      rtsp_path_main: body.rtsp_path_main,
+      rtsp_path_sub: body.rtsp_path_sub,
+      rtsp_path_mobile: body.rtsp_path_mobile,
+      ptz_enabled: body.ptz_enabled,
+      mediamtx_path: pendingPath,
+      stream_quality: body.stream_quality,
+      home_preset_token: body.home_preset_token,
+    });
+  } catch (err) {
+    if (isUniqueConstraintError(err)) {
+      throw new Error("MediaMTX path đã tồn tại — thử lại");
+    }
+    throw err;
+  }
+
+  const finalPath = buildMediamtxPath(machineCode, camera.id);
+  try {
+    camera = setCameraMediamtxPath(camera.id, finalPath);
+  } catch (err) {
+    softDeleteCamera(camera.id);
+    if (isUniqueConstraintError(err)) {
+      throw new Error("MediaMTX path đã tồn tại");
+    }
+    throw err;
+  }
 
   return toAdminCamera(camera);
 }
@@ -188,7 +248,9 @@ export function updateCameraRecord(cameraId, body) {
     throw new Error("Không tìm thấy camera");
   }
 
-  const updated = updateCamera(cameraId, body);
+  // Path bất biến sau create (WHEP / AI agent / stream đang chạy).
+  const { mediamtx_path: _ignored, ...patch } = body ?? {};
+  const updated = updateCamera(cameraId, patch);
   invalidateSession(cameraId);
   return toAdminCamera(updated);
 }

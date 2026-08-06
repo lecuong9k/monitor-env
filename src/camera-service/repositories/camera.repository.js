@@ -168,7 +168,6 @@ export function insertCamera(data) {
  *   rtsp_path_sub: string;
  *   rtsp_path_mobile: string;
  *   ptz_enabled: boolean;
- *   mediamtx_path: string;
  *   stream_quality: string;
  *   home_preset_token: string;
  *   status: number;
@@ -181,6 +180,8 @@ export function updateCamera(id, data) {
   const fields = [];
   const params = { id };
 
+  // mediamtx_path cố định sau create — không cho update qua API.
+  // Dùng setCameraMediamtxPath() một lần ngay sau insert.
   const setters = {
     name: "name",
     host: "host",
@@ -191,7 +192,6 @@ export function updateCamera(id, data) {
     rtsp_path_main: "rtsp_path_main",
     rtsp_path_sub: "rtsp_path_sub",
     rtsp_path_mobile: "rtsp_path_mobile",
-    mediamtx_path: "mediamtx_path",
     stream_quality: "stream_quality",
     home_preset_token: "home_preset_token",
     status: "status",
@@ -222,6 +222,27 @@ export function updateCamera(id, data) {
     params,
   );
 
+  return findCameraById(id);
+}
+
+/**
+ * Gắn mediamtx_path lần đầu sau insert (khi đã có id).
+ * Không dùng cho API update thông thường.
+ * @param {number} id
+ * @param {string} mediamtxPath
+ */
+export function setCameraMediamtxPath(id, mediamtxPath) {
+  const path = String(mediamtxPath || "").trim();
+  if (!path) {
+    throw new Error("mediamtx_path không hợp lệ");
+  }
+  db.prepare(
+    `
+      UPDATE cameras
+      SET mediamtx_path = @mediamtx_path, updated_at = datetime('now')
+      WHERE id = @id
+    `,
+  ).run({ id, mediamtx_path: path });
   return findCameraById(id);
 }
 
